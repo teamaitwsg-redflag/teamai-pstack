@@ -25,6 +25,8 @@ find_bin() {
   upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
   eval "override=\${TEAMAI_${upper}_BIN-__unset__}"
   if [ "$override" != "__unset__" ]; then
+    # 之後會切換目錄才執行，所以先換成絕對路徑，確保執行的就是這裡檢查過的那個檔案
+    case "$override" in /*) ;; *) override="$PWD/$override" ;; esac
     [ -x "$override" ] && printf '%s\n' "$override"
     return 0
   fi
@@ -182,8 +184,13 @@ fi
 [ -d "$repo" ] || die "找不到資料夾：$repo"
 repo="$(cd "$repo" && pwd)"
 
+# 收集改動用的 git：不讓 repo 的設定在這裡執行外部程式（fsmonitor、外部 diff、textconv），也不要顏色碼
+g() { git -C "$repo" -c core.fsmonitor=false "$@"; }
+gd() { g diff --no-color --no-ext-diff --no-textconv "$@"; }
+
 if [ -z "$src" ]; then
-  if [ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then src="uncommitted"
+  st="$(g status --porcelain --untracked-files=all 2>/dev/null)" || die "git status 失敗：$repo 不是 git repo，或 git 出錯"
+  if [ -n "$st" ]; then src="uncommitted"
   else echo "工作區沒有未 commit 的改動。要審分支請用 --base <分支>，要審現成的 diff 請用 --diff <檔案>。" >&2; exit 3; fi
 fi
 
@@ -205,20 +212,25 @@ fi
 out="$(cd "$out" && pwd)"
 change="$out/change.diff"
 
-# --no-ext-diff --no-textconv：不讓 repo 的 git 設定在產生 diff 時執行外部程式
-gd() { git -C "$repo" diff --no-ext-diff --no-textconv "$@"; }
 case "$src" in
   uncommitted)
-    gd HEAD >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log"
+    # 已 add 的與還沒 add 的分開收：只看工作區對 HEAD 的話，add 之後又改回去的內容會漏掉
+    { gd --cached HEAD && gd; } >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log"
     # git diff 不含還沒 add 的新檔，要另外補進來（被 .gitignore 忽略的不算）
-    git -C "$repo" ls-files --others --exclude-standard -z 2>>"$out/git.log" |
-      while IFS= read -r -d '' f; do
-        ( cd "$repo" && git diff --no-ext-diff --no-textconv --no-index -- /dev/null "$f" ) >>"$change" 2>>"$out/git.log"
-      done ;;
+    g ls-files --others --exclude-standard -z >"$out/untracked.list" 2>>"$out/git.log" || die "列不出未追蹤的檔案，見 $out/git.log"
+    while IFS= read -r -d '' f; do
+      # 這一輪自己的輸出不算改動
+      case "$repo/$f" in "$out"/*) continue ;; esac
+      [ -r "$repo/$f" ] || die "讀不到未追蹤的檔案，沒有送出：$f"
+      ( cd "$repo" && git -c core.fsmonitor=false diff --no-color --no-ext-diff --no-textconv --no-index -- /dev/null "$f" ) >>"$change" 2>>"$out/git.log"
+    done <"$out/untracked.list"
+    rm -f "$out/untracked.list" ;;
   base) gd "$base...HEAD" >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log" ;;
   diff)
     [ -f "$diff_file" ] || die "找不到 diff 檔：$diff_file"
-    cp "$diff_file" "$change" || die "複製不了 diff 檔：$diff_file" ;;
+    cp "$diff_file" "$change" || die "複製不了 diff 檔：$diff_file"
+    # 顏色控制碼會讓下面的檔名檢查看不到標頭
+    if grep -q "$(printf '\033')" "$change"; then rm -f "$change"; die "diff 檔裡有終端機顏色控制碼，請用 --no-color 重新產生"; fi ;;
 esac
 if [ ! -s "$change" ]; then echo "沒有改動可以審。" >&2; exit 3; fi
 
@@ -233,9 +245,14 @@ headers="$(grep -nE '^(diff --git |\+\+\+ |--- |rename from |rename to )' "$chan
 [ "$rc" -gt 1 ] && { echo "密鑰掃描失敗，沒有送出。" >&2; exit 4; }
 envhits="$(printf '%s\n' "$headers" | grep -E "[/\" ${TAB}]\\.env([.\" ${TAB}]|\$)" | grep -vE "\\.env\\.(example|sample|template)([\" ${TAB}]|\$)")"
 if [ -n "$hits" ] || [ -n "$envhits" ]; then
-  { printf '%s\n' "$hits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: 疑似密鑰/'
-    printf '%s\n' "$envhits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: .env 檔/'; } >"$out/secrets.txt"
-  echo "改動裡疑似有密鑰或 .env，沒有送出。行號見 $out/secrets.txt（對應 ${change}）。" >&2
+  # 報告只寫是哪個檔案，不抄內容；含原文的 change.diff 也刪掉，免得下一輪被審查者讀到
+  nums="$(printf '%s\n' "$hits" | cut -d: -f1 | tr '\n' ' ')"
+  { awk -v nums="$nums" 'BEGIN { n = split(nums, a, " "); for (i = 1; i <= n; i++) want[a[i]] = 1 }
+      /^\+\+\+ / { file = substr($0, 5) }
+      (NR in want) { print file ": 疑似密鑰" }' "$change" | sort -u
+    printf '%s\n' "$envhits" | cut -d: -f2- | sed -e '/^$/d' -e 's/$/: .env 檔/'; } >"$out/secrets.txt"
+  rm -f "$change"
+  echo "改動裡疑似有密鑰或 .env，沒有送出。是哪些檔案見 $out/secrets.txt" >&2
   exit 4
 fi
 

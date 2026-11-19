@@ -101,7 +101,8 @@ printf 'token = "ghp_%s"\n' "abcdefghijklmnopqrstuvwxyz0123" >>"$repo/a.txt"
 "$panel" --repo "$repo" --out "$tmp/o5" >"$tmp/o5.txt" 2>&1; rc=$?
 check "結束碼 4" '[ "$rc" -eq 4 ]'
 check "沒有呼叫任何審查者" '[ ! -s "$FAKE_LOG" ]'
-check "報告只寫行號，沒有把密鑰抄進去" 'grep -q "疑似密鑰" "$tmp/o5/secrets.txt" && ! grep -q "ghp_" "$tmp/o5/secrets.txt"'
+check "報告只寫檔名，沒有把密鑰抄進去" 'grep -q "a.txt: 疑似密鑰" "$tmp/o5/secrets.txt" && ! grep -q "ghp_" "$tmp/o5/secrets.txt"'
+check "含密鑰的 change.diff 沒有留下來" '[ ! -e "$tmp/o5/change.diff" ] && ! grep -rq "ghp_" "$tmp/o5"'
 git -C "$repo" checkout -q a.txt; echo two >>"$repo/a.txt"
 printf 'token = "ghs_%s"\n' "abcdefghijklmnopqrstuvwxyz0123" >>"$repo/a.txt"
 "$panel" --repo "$repo" --out "$tmp/o5b" >"$tmp/o5b.txt" 2>&1; rc=$?
@@ -125,6 +126,14 @@ printf 'diff --git a/config.txt b/.env\nsimilarity index 100%%\nrename from conf
 "$panel" --repo "$repo" --out "$tmp/o6d" --diff "$tmp/rename.diff" >"$tmp/o6d.txt" 2>&1; rc=$?
 check "純改名成 .env：結束碼 4" '[ "$rc" -eq 4 ]'
 check "以上都沒有呼叫任何審查者" '[ ! -s "$FAKE_LOG" ]'
+git -C "$repo" config color.ui always
+echo "X=1" >"$repo/.env"
+"$panel" --repo "$repo" --out "$tmp/o6f" >"$tmp/o6f.txt" 2>&1; rc=$?
+check "repo 設成強制彩色輸出時 .env 照樣擋（結束碼 4）" '[ "$rc" -eq 4 ]'
+rm "$repo/.env"; git -C "$repo" config --unset color.ui
+printf '\033[1mdiff --git a/x b/x\033[m\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/color.diff"
+"$panel" --repo "$repo" --out "$tmp/o6g" --diff "$tmp/color.diff" >"$tmp/o6g.txt" 2>&1; rc=$?
+check "帶顏色控制碼的 diff 檔：拒絕（結束碼 64）" '[ "$rc" -eq 64 ]'
 echo "X=" >"$repo/.env.example"
 "$panel" --repo "$repo" --out "$tmp/o6e" --only codex >"$tmp/o6e.txt" 2>&1; rc=$?
 check ".env.example 是範例檔，照常送審" '[ "$rc" -eq 0 ]'
@@ -143,6 +152,16 @@ echo "brand new" >"$repo/new.txt"
 "$panel" --repo "$repo" --out "$tmp/o7c" --only codex >"$tmp/o7c.txt" 2>&1; rc=$?
 check "change.diff 裡有新檔的內容" 'grep -q "^+brand new" "$tmp/o7c/change.diff" && grep -q "^+two" "$tmp/o7c/change.diff"'
 rm "$repo/new.txt"
+git -C "$repo" checkout -q a.txt
+echo staged >>"$repo/a.txt"; git -C "$repo" add a.txt; git -C "$repo" show HEAD:a.txt >"$repo/a.txt"
+"$panel" --repo "$repo" --out "$tmp/o7c2" --only codex >"$tmp/o7c2.txt" 2>&1; rc=$?
+check "add 之後又在工作區改回去：已 add 的內容仍然送審" 'grep -q "^+staged" "$tmp/o7c2/change.diff"'
+git -C "$repo" reset -q --hard; echo two >>"$repo/a.txt"
+"$panel" --repo "$repo" --out "$repo/inside-out" --only codex >"$tmp/o7c3.txt" 2>&1; rc=$?
+check "--out 放在 repo 裡：自己的輸出不會被當成改動送審" '[ "$rc" -eq 0 ] && ! grep -q "inside-out" "$repo/inside-out/change.diff"'
+rm -rf "$repo/inside-out"
+( cd "$tmp/bin" && TEAMAI_CODEX_BIN="./codex" "$panel" --repo "$repo" --out "$tmp/o7c4" --only codex >"$tmp/o7c4.txt" 2>&1 ); rc=$?
+check "TEAMAI_CODEX_BIN 給相對路徑：切換目錄後仍執行同一個檔案" '[ "$rc" -eq 0 ] && grep -q "^codex	ok" "$tmp/o7c4/summary.tsv"'
 
 echo "7c. --base 只審分支上的 commit，--diff 審現成的檔案"
 git -C "$repo" checkout -q -b feature
