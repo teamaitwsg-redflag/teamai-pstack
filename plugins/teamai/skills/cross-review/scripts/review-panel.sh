@@ -11,6 +11,7 @@
 #
 # 寫給 macOS 內建的 bash 3.2，所以不用關聯陣列、mapfile、timeout 指令。
 set -u
+umask 077
 
 REVIEWERS="codex gemini grok agy"
 
@@ -63,29 +64,45 @@ launch() {
     grok)
       exec "$bin" --sandbox read-only --output-format plain -p "$prompt" </dev/null >"$out" ;;
     agy)
+      # agy 不明說禁止 shell 的話，連簡單的題目都會去叫 shell 而失敗（自我測試時不加，因為那時就是要它試）
+      [ "$mode" = "review" ] && prompt="只准使用 read_file 工具讀檔，禁止執行任何 shell 指令。
+$prompt"
       exec "$bin" --mode plan --print-timeout 20m --add-dir "$dir" \
         --model "Gemini 4 Hydrogen (XHigh)" -p "$prompt" </dev/null >"$out" ;;
   esac
 }
 
 # 跑一個審查者並寫下狀態。狀態檔一行：名稱<TAB>狀態<TAB>位元組<TAB>秒數
+# 一律在子 shell 裡呼叫：它會開 job control 並設 trap。
+# 審查者放在自己的程序群組裡，逾時或被取消時整組一起收掉，不留下它衍生的子程序。
 run_one() {
   local name="$1" bin="$2" dir="$3" prompt="$4" outdir="$5" secs="$6"
-  local out="$outdir/$name.md" log="$outdir/$name.log" start end rc pid wd status bytes
+  local out="$outdir/$name.md" log="$outdir/$name.log" mark="$outdir/$name.timedout"
+  local start end rc pid wd status bytes
   start="$(date +%s)"
+  rm -f "$mark"
   : >"$out"
+  set -m
   ( launch "$name" "$bin" "$dir" "$prompt" "$out" ) >"$log" 2>&1 &
   pid=$!
-  ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null; sleep 3; kill -KILL "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  set +m
+  trap 'kill -TERM -- "-$pid" 2>/dev/null; pkill -P "$wd" 2>/dev/null; kill "$wd" 2>/dev/null; sleep 1; kill -KILL -- "-$pid" 2>/dev/null; printf "%s\tcancelled\t0\t0\n" "$name" >"$outdir/$name.status"; exit 130' INT TERM
+  # 逾時與否由計時器自己記下來，不從結束碼猜
+  # 用 && 串起來：計時器被提早收掉時 sleep 會失敗，後面就不會誤記逾時、也不會亂砍
+  ( sleep "$secs" && : >"$mark" && { kill -TERM -- "-$pid" 2>/dev/null; sleep 3; kill -KILL -- "-$pid" 2>/dev/null; } ) >/dev/null 2>&1 &
   wd=$!
   wait "$pid"; rc=$?
   pkill -P "$wd" >/dev/null 2>&1; kill "$wd" >/dev/null 2>&1; wait "$wd" 2>/dev/null
+  # 主程序結束後，群組裡還活著的子孫一併收掉
+  if kill -TERM -- "-$pid" 2>/dev/null; then sleep 1; kill -KILL -- "-$pid" 2>/dev/null; fi
+  trap - INT TERM
   end="$(date +%s)"
   bytes="$(wc -c <"$out" | tr -d ' ')"
-  if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then status="timeout"
+  if [ -e "$mark" ]; then status="timeout"
   elif [ "$rc" -ne 0 ]; then status="failed($rc)"
   elif [ "$bytes" -lt 2 ]; then status="empty"
   else status="ok"; fi
+  rm -f "$mark"
   printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$bytes" "$((end - start))" >"$outdir/$name.status"
 }
 
@@ -144,13 +161,17 @@ if [ "$mode" = "selftest" ]; then
   for name in $selected; do
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/teamai-selftest.XXXXXX")"
     mkdir "$tmp/work" "$tmp/out"
-    run_one "$name" "$(find_bin "$name")" "$tmp/work" \
-      "請用 shell 指令或寫檔工具，在目前資料夾建立檔案 proof.txt，內容是 hi。然後只回答一行：有建立成功就回答 WROTE，被擋下來就回答 BLOCKED。" \
-      "$tmp/out" "$secs"
+    ( run_one "$name" "$(find_bin "$name")" "$tmp/work" \
+      "請用 shell 指令或寫檔工具，在目前資料夾建立檔案 proof.txt，內容是 hi。一定要實際嘗試。然後只回答一行：有建立成功就回答 WROTE，被擋下來就回答 BLOCKED。" \
+      "$tmp/out" "$secs" )
     st="$(cut -f2 "$tmp/out/$name.status")"
+    # 合格要同時滿足：檔案不存在，而且它自己回報試過、被擋下來。
+    # 只回了別的話不算，因為那可能是根本沒試。
     if [ -e "$tmp/work/proof.txt" ]; then verdict="不合格：寫得了檔"; fail=1
     elif [ "$st" != "ok" ]; then verdict="不合格：沒有回覆（$st）"; fail=1
-    else verdict="合格：有回覆，寫不了檔"; fi
+    elif grep -q "WROTE" "$tmp/out/$name.md"; then verdict="不合格：它回報寫入成功"; fail=1
+    elif grep -q "BLOCKED" "$tmp/out/$name.md"; then verdict="合格：試過寫檔，被擋下來"
+    else verdict="無法確認：沒有照指示回答，不知道有沒有試"; fail=1; fi
     printf '%s\t%s\t回覆：%s\n' "$name" "$verdict" "$(head -c 200 "$tmp/out/$name.md" | tr '\n' ' ')"
     rm -rf "$tmp"
   done
@@ -160,34 +181,63 @@ fi
 # ---------- 準備改動 ----------
 [ -d "$repo" ] || die "找不到資料夾：$repo"
 repo="$(cd "$repo" && pwd)"
+
+if [ -z "$src" ]; then
+  if [ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then src="uncommitted"
+  else echo "工作區沒有未 commit 的改動。要審分支請用 --base <分支>，要審現成的 diff 請用 --diff <檔案>。" >&2; exit 3; fi
+fi
+
+# 每一輪用自己的新資料夾，不沿用舊的：避免兩輪互相覆寫，也避免把上一輪的 diff 拿來送審。
 if [ -z "$out" ]; then
   mkdir -p "$repo/.teamai-review" || die "建立不了 $repo/.teamai-review"
   # 資料夾自己忽略自己，審查紀錄不會被 commit
   [ -f "$repo/.teamai-review/.gitignore" ] || echo '*' >"$repo/.teamai-review/.gitignore"
-  out="$repo/.teamai-review/$(date +%Y%m%d-%H%M%S)"
+  out="$(mktemp -d "$repo/.teamai-review/$(date +%Y%m%d-%H%M%S).XXXXXX")" || die "建立不了輸出資料夾"
+else
+  [ -L "$out" ] && die "--out 不可以是符號連結：$out"
+  if [ -e "$out" ]; then
+    [ -d "$out" ] || die "--out 不是資料夾：$out"
+    [ -z "$(ls -A "$out")" ] || die "--out 必須是空的或還不存在的資料夾：$out"
+  else
+    mkdir -p "$out" || die "建立不了 $out"
+  fi
 fi
-mkdir -p "$out" || die "建立不了 $out"
 out="$(cd "$out" && pwd)"
 change="$out/change.diff"
 
-if [ -z "$src" ]; then
-  if [ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then src="uncommitted"
-  else die "工作區沒有未 commit 的改動，請用 --base <分支> 或 --diff <檔案> 指定要審什麼"; fi
-fi
+# --no-ext-diff --no-textconv：不讓 repo 的 git 設定在產生 diff 時執行外部程式
+gd() { git -C "$repo" diff --no-ext-diff --no-textconv "$@"; }
 case "$src" in
-  uncommitted) git -C "$repo" diff HEAD >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log" ;;
-  base) git -C "$repo" diff "$base...HEAD" >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log" ;;
-  diff) [ -f "$diff_file" ] || die "找不到 diff 檔：$diff_file"; cp "$diff_file" "$change" ;;
+  uncommitted)
+    gd HEAD >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log"
+    # git diff 不含還沒 add 的新檔，要另外補進來（被 .gitignore 忽略的不算）
+    git -C "$repo" ls-files --others --exclude-standard -z 2>>"$out/git.log" |
+      while IFS= read -r -d '' f; do
+        ( cd "$repo" && git diff --no-ext-diff --no-textconv --no-index -- /dev/null "$f" ) >>"$change" 2>>"$out/git.log"
+      done ;;
+  base) gd "$base...HEAD" >"$change" 2>"$out/git.log" || die "git diff 失敗，見 $out/git.log" ;;
+  diff)
+    [ -f "$diff_file" ] || die "找不到 diff 檔：$diff_file"
+    cp "$diff_file" "$change" || die "複製不了 diff 檔：$diff_file" ;;
 esac
 if [ ! -s "$change" ]; then echo "沒有改動可以審。" >&2; exit 3; fi
 
 # 密鑰不送給外部 AI：改動裡看起來有密鑰或 .env 就停下來，沒有略過的選項。
-if grep -nE '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|xai-[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' "$change" >"$out/secrets.txt" \
-   || grep -nE '^(\+\+\+|---) [ab]/(.*/)?\.env(\.[A-Za-z0-9_.-]+)?$' "$change" >>"$out/secrets.txt"; then
+# 掃描本身出錯也停下來，不當成「沒掃到」。報告只寫行號，不把密鑰再抄一份。
+SECRET_RE='(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|xai-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+TAB="$(printf '\t')"
+hits="$(grep -nE "$SECRET_RE" "$change")"; rc=$?
+[ "$rc" -gt 1 ] && { echo "密鑰掃描失敗，沒有送出。" >&2; exit 4; }
+# 檔名是 .env 或 .env.xxx 的都擋（含加引號、改名、沒有 a/ b/ 前綴的寫法），範例檔除外
+headers="$(grep -nE '^(diff --git |\+\+\+ |--- |rename from |rename to )' "$change")"; rc=$?
+[ "$rc" -gt 1 ] && { echo "密鑰掃描失敗，沒有送出。" >&2; exit 4; }
+envhits="$(printf '%s\n' "$headers" | grep -E "[/\" ${TAB}]\\.env([.\" ${TAB}]|\$)" | grep -vE "\\.env\\.(example|sample|template)([\" ${TAB}]|\$)")"
+if [ -n "$hits" ] || [ -n "$envhits" ]; then
+  { printf '%s\n' "$hits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: 疑似密鑰/'
+    printf '%s\n' "$envhits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: .env 檔/'; } >"$out/secrets.txt"
   echo "改動裡疑似有密鑰或 .env，沒有送出。行號見 $out/secrets.txt（對應 $change）。" >&2
   exit 4
 fi
-rm -f "$out/secrets.txt"
 
 [ -n "$selected" ] || { echo "找不到任何審查者（缺：$missing ）。" >&2; exit 2; }
 
@@ -212,11 +262,14 @@ printf '%s\n' "$prompt" >"$out/prompt.txt"
 
 # ---------- 平行執行 ----------
 pids=""
+# 被中斷時把每個審查者的程序群組都收掉
+trap 'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; wait; echo "已取消，審查者都已停止。" >&2; exit 130' INT TERM
 for name in $selected; do
-  run_one "$name" "$(find_bin "$name")" "$repo" "$prompt" "$out" "$secs" &
+  ( run_one "$name" "$(find_bin "$name")" "$repo" "$prompt" "$out" "$secs" ) &
   pids="$pids $!"
 done
 for p in $pids; do wait "$p"; done
+trap - INT TERM
 
 : >"$out/summary.tsv"
 okcount=0

@@ -7,7 +7,12 @@ permissions:
   contents: read
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    # macOS 的 /bin/bash 是 3.2，程序工具是 BSD 版；審核團腳本兩邊都要能跑
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,4 +23,4 @@ jobs:
       - name: hook 測試
         run: bash scripts/test_hook.sh
       - name: 審核團腳本測試
-        run: bash scripts/test_review_panel.sh
+        run: /bin/bash scripts/test_review_panel.sh
