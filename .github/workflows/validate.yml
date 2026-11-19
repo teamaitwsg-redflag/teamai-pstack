@@ -4,6 +4,11 @@ on:
   pull_request:
 permissions:
   contents: read
+# 分支上有新的推送時，取消同一分支還在排隊或執行的舊一輪：連續推送時不讓過時的工作佔著佇列。
+# main 不取消，每個進 main 的 commit 都要留下完整的結果。
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   validate:
     # macOS 的 /bin/bash 是 3.2，程序工具是 BSD 版；審核團腳本兩邊都要能跑
@@ -12,6 +17,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # 整套檢查不到一分鐘；卡住時十分鐘就停，不要佔著機器
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

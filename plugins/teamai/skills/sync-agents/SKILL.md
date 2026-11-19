@@ -13,8 +13,7 @@ Claude Code 的規則是靠 plugin 在 session 開始時載入的，其他工具
 |---|---|---|
 | Grok CLI | `~/.grok/AGENTS.md` | Grok CLI 也會自動讀到 Claude Code 裝的 plugin skill |
 | Codex（ChatGPT 桌面版內附） | `~/.codex/AGENTS.md` | |
-| Gemini CLI | `~/.gemini/GEMINI.md` | |
-| Antigravity（agy） | `~/.gemini/config/AGENTS.md` | |
+| Gemini CLI 與 Antigravity（agy） | `~/.gemini/GEMINI.md` | 兩個工具都讀這個檔。agy 另外也讀 `~/.gemini/config/AGENTS.md`，兩邊都寫會載入兩次，所以只寫這一個 |
 
 ## 步驟
 
@@ -32,7 +31,7 @@ Claude Code 的規則是靠 plugin 在 session 開始時載入的，其他工具
 
 3. 逐一確認真的生效。規則檔寫進去不等於工具有讀到：
    - Grok：`grok inspect` 的輸出裡要看得到 `~/.grok/AGENTS.md`。
-   - Codex、Gemini：用唯讀模式問它一句「你的規則裡有沒有『球員不兼裁判』？原文是什麼？」，看它答不答得出來。
+   - Codex、agy、Gemini：用唯讀模式問它一句「你的規則裡有沒有『球員不兼裁判』？原文是什麼？」，看它答不答得出來。
    - 沒登入的工具無法驗證，照實回報「已寫入，未驗證」。
 
 4. 回報每個工具的狀態：已寫入並驗證、已寫入未驗證、沒裝。

@@ -8,8 +8,7 @@
 # 目標檔案：
 #   Grok CLI    ~/.grok/AGENTS.md
 #   Codex       ~/.codex/AGENTS.md
-#   Gemini CLI  ~/.gemini/GEMINI.md
-#   Antigravity ~/.gemini/config/AGENTS.md
+#   Gemini CLI 與 Antigravity（agy）  ~/.gemini/GEMINI.md
 # 只改兩個標記之間的區塊；檔案裡原本的內容不動。可以重複執行。
 set -u
 
@@ -55,8 +54,12 @@ strip_block() {
 # 名稱<TAB>判斷有沒有裝的資料夾<TAB>規則檔
 targets="grok	$HOME/.grok	$HOME/.grok/AGENTS.md
 codex	$HOME/.codex	$HOME/.codex/AGENTS.md
-gemini	$HOME/.gemini	$HOME/.gemini/GEMINI.md
-agy	$HOME/.gemini/config	$HOME/.gemini/config/AGENTS.md"
+google	$HOME/.gemini	$HOME/.gemini/GEMINI.md"
+
+# 以前寫過、現在不再使用的位置：裡面如果還有我們的區塊就拿掉。
+# agy 會同時讀 ~/.gemini/GEMINI.md 和 ~/.gemini/config/AGENTS.md（2026-11 在 agy 1.5.12 實測），
+# 兩邊都寫的話同一份規則會被載入兩次，所以只留 GEMINI.md。
+retired="$HOME/.gemini/config/AGENTS.md"
 
 stale=0
 tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.new"' EXIT
@@ -77,6 +80,11 @@ printf '%s\n' "$targets" | while IFS="	" read -r name dir file; do
   elif [ "$mode" = "check" ]; then printf '%s\t需要更新\t%s\n' "$name" "$file"; echo 1 >"$tmp.stale"
   else cp "$tmp.out" "$file" && printf '%s\t已寫入\t%s\n' "$name" "$file"; fi
   rm -f "$tmp.out"
+done
+for old in $retired; do
+  [ -f "$old" ] && grep -qF "$START" "$old" || continue
+  if [ "$mode" = "check" ]; then printf '舊位置\t需要清除\t%s\n' "$old"; echo 1 >"$tmp.stale"
+  else strip_block "$old" >"$tmp.new" && cp "$tmp.new" "$old" && printf '舊位置\t已清除\t%s\n' "$old"; fi
 done
 if [ -f "$tmp.stale" ]; then rm -f "$tmp.stale"; exit 1; fi
 exit 0
