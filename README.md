@@ -87,7 +87,7 @@ claude plugin install teamai@teamai-pstack
 2. 跑檢查：
 
 ```bash
-python3 scripts/validate.py && bash scripts/test_hook.sh && bash scripts/test_review_panel.sh && bash scripts/test_sync_rules.sh
+bash scripts/check.sh
 ```
 
 3. 用 `bash install.sh --local` 裝到本機，開新 session 試用。

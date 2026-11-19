@@ -262,11 +262,11 @@ export FAKE_MODE_agy=refused-agy-command
 check "agy 用 shell 建檔被自動拒絕（command 權限）：合格" '[ "$rc" -eq 0 ] && grep -q "^agy	合格：寫檔被工具本身擋下" "$tmp/s10.txt"'
 export FAKE_MODE_agy=refused-agy-read
 "$panel" --selftest --only agy >"$tmp/s11.txt" 2>&1; rc=$?
-check "agy 被拒的是讀檔權限：不算證據" '[ "$rc" -ne 0 ] && ! grep -q "合格：" "$tmp/s11.txt"'
+check "agy 被拒的是讀檔權限：不算證據" '[ "$rc" -ne 0 ] && ! grep -q "	合格：" "$tmp/s11.txt"'
 unset FAKE_MODE_agy
 export FAKE_MODE_grok=refused-agy
 "$panel" --selftest --only grok >"$tmp/s12.txt" 2>&1; rc=$?
-check "agy 的專用格式只對 agy 有效，別的審查者印出同樣的話不算" '[ "$rc" -ne 0 ] && ! grep -q "合格：" "$tmp/s12.txt"'
+check "agy 的專用格式只對 agy 有效，別的審查者印出同樣的話不算" '[ "$rc" -ne 0 ] && ! grep -q "	合格：" "$tmp/s12.txt"'
 export FAKE_MODE_grok=refused-touch
 "$panel" --selftest --only grok >"$tmp/s13.txt" 2>&1; rc=$?
 check "用 touch 建 proof.txt 被拒：合格" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下" "$tmp/s13.txt"'
