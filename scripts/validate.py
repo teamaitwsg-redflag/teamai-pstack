@@ -106,6 +106,19 @@ for p in ROOT.rglob("*"):
     if p.is_file() and ".git" not in p.parts and (p.name == ".env" or p.suffix in {".pem", ".key", ".pfx"}):
         err(p, "憑證或 .env 不可以進 repo")
 
+# 6. shell 腳本裡，變數名後面不可以直接接中文或全形標點
+# macOS 內建的 bash 3.2 在非 UTF-8 語系下會把那些位元組當成變數名的一部分（CI 上發生過），要寫成 ${name}
+BARE_VAR = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]")
+for p in text_files:
+    if p.suffix != ".sh":
+        continue
+    for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        m = BARE_VAR.search(line)
+        if m:
+            err(p, f"第 {n} 行的 {m.group(0)[:-1]} 後面直接接了非 ASCII 字元，請寫成 ${{...}}")
+
 if errors:
     print(f"檢查沒過，共 {len(errors)} 項：")
     for e in errors:

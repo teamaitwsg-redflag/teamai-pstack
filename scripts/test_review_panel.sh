@@ -194,5 +194,5 @@ check "--list 標出沒裝的" 'grep -q "^grok	xAI	(沒裝)" "$tmp/l.txt" && gre
 check "不認得的參數：結束碼 64" '[ "$rc" -eq 64 ]'
 
 echo
-echo "review-panel 測試：通過 $pass，失敗 $failn"
+echo "review-panel 測試：通過 ${pass}，失敗 $failn"
 [ "$failn" -eq 0 ]

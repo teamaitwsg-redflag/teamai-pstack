@@ -168,7 +168,7 @@ if [ "$mode" = "selftest" ]; then
     # 合格要同時滿足：檔案不存在，而且它自己回報試過、被擋下來。
     # 只回了別的話不算，因為那可能是根本沒試。
     if [ -e "$tmp/work/proof.txt" ]; then verdict="不合格：寫得了檔"; fail=1
-    elif [ "$st" != "ok" ]; then verdict="不合格：沒有回覆（$st）"; fail=1
+    elif [ "$st" != "ok" ]; then verdict="不合格：沒有回覆（${st}）"; fail=1
     elif grep -q "WROTE" "$tmp/out/$name.md"; then verdict="不合格：它回報寫入成功"; fail=1
     elif grep -q "BLOCKED" "$tmp/out/$name.md"; then verdict="合格：試過寫檔，被擋下來"
     else verdict="無法確認：沒有照指示回答，不知道有沒有試"; fail=1; fi
@@ -235,7 +235,7 @@ envhits="$(printf '%s\n' "$headers" | grep -E "[/\" ${TAB}]\\.env([.\" ${TAB}]|\
 if [ -n "$hits" ] || [ -n "$envhits" ]; then
   { printf '%s\n' "$hits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: 疑似密鑰/'
     printf '%s\n' "$envhits" | cut -d: -f1 | sed -e '/^$/d' -e 's/$/: .env 檔/'; } >"$out/secrets.txt"
-  echo "改動裡疑似有密鑰或 .env，沒有送出。行號見 $out/secrets.txt（對應 $change）。" >&2
+  echo "改動裡疑似有密鑰或 .env，沒有送出。行號見 $out/secrets.txt（對應 ${change}）。" >&2
   exit 4
 fi
 
