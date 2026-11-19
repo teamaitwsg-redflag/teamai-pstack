@@ -28,7 +28,8 @@
 | 驗證流程會重複做 | `/pstack:create-verification-skill` | 把人工操作步驟寫成 skill，之後自動照做並存證 |
 | 會波及哪裡 | `/pstack:blast-radius` | 評估影響範圍，動到核心邏輯就請人仔細看 |
 | 寫得乾淨嗎 | `/pstack:interrogate` | 交給不同模型找漏洞 |
-| 跨廠牌再看一次 | `/teamai:agy-second-opinion` | 用 Gemini 審一次，結果回原始資料驗證 |
+| 跨廠牌再看一次 | `/teamai:cross-review` | 把改動平行交給本機的 Codex、Gemini、Grok 唯讀審查，結果逐條查證 |
+| 只有 agy 或要審文件、圖片 | `/teamai:agy-second-opinion` | 用 Gemini 審一次，結果回原始資料驗證 |
 
 ## 四、無人看管
 

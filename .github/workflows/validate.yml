@@ -17,3 +17,5 @@ jobs:
         run: python scripts/validate.py
       - name: hook 測試
         run: bash scripts/test_hook.sh
+      - name: 審核團腳本測試
+        run: bash scripts/test_review_panel.sh

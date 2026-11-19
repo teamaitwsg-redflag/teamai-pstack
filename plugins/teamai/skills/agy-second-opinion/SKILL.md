@@ -1,6 +1,6 @@
 ---
 name: agy-second-opinion
-description: 用 Google Antigravity CLI（agy，Gemini 模型）對程式碼、文件、PDF、圖片做跨廠牌的第二意見審查，找出 Claude 自己的盲點。使用者說「用 agy 驗證／審核／檢查／第二意見／交叉檢查／審程式碼」，或重要變更合併前、重要文件交付前需要獨立查核時使用。含固定呼叫寫法、審查 prompt 範本、收到結果後的查證步驟，以及安裝與登入。本機沒有 agy 而且使用者不打算安裝時不要用，改用 /pstack:interrogate 並說明少了跨廠牌這一道。
+description: 用 Google Antigravity CLI（agy，Gemini 模型）對程式碼、文件、PDF、圖片做跨廠牌的第二意見審查，找出 Claude 自己的盲點。使用者說「用 agy 驗證／審核／檢查／第二意見／交叉檢查／審程式碼」，或重要變更合併前、重要文件交付前需要獨立查核時使用。含固定呼叫寫法、審查 prompt 範本、收到結果後的查證步驟，以及安裝與登入。審程式碼的改動、而且本機有 Codex、Gemini CLI 或 Grok 時不要用，改用 /teamai:cross-review。
 ---
 
 # agy 第二意見

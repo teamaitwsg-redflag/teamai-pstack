@@ -49,7 +49,8 @@ claude plugin install teamai@teamai-pstack
 | `/teamai:evidence` | 交件附證據：實際執行並逐條對照驗收條件 |
 | `/teamai:trust-ladder` | 信任曲線檢核：專案可以自動化到什麼程度 |
 | `/teamai:overnight` | 過夜任務單：完成條件、停損條件、權限範圍 |
-| `/teamai:agy-second-opinion` | 用 agy（Gemini）做跨廠牌的第二意見審查 |
+| `/teamai:cross-review` | 跨廠牌審核團：把改動平行交給本機的 Codex（GPT）、Gemini、Grok 唯讀審查，再逐條查證 |
+| `/teamai:agy-second-opinion` | 用 agy（Gemini）審文件、PDF、圖片，或只有 agy 可用時的第二意見 |
 
 另外，plugin 會在每個 session 開始時載入兩份內容：
 
@@ -72,10 +73,10 @@ claude plugin install teamai@teamai-pstack
 | 路徑 | 用途 |
 |---|---|
 | `.claude-plugin/marketplace.json` | 讓這個 repo 可以用 `claude plugin marketplace add` 加入 |
-| `plugins/teamai/skills/` | 六個 skill，每個資料夾一個 `SKILL.md` |
+| `plugins/teamai/skills/` | 七個 skill，每個資料夾一個 `SKILL.md` |
 | `plugins/teamai/rules/` | 共用規則與模型分工表 |
 | `plugins/teamai/hooks/` | session 開始時載入規則的 hook |
-| `scripts/validate.py`、`scripts/test_hook.sh` | 結構檢查與 hook 測試，CI 會跑 |
+| `scripts/validate.py`、`scripts/test_hook.sh`、`scripts/test_review_panel.sh` | 結構檢查、hook 測試、審核團腳本測試，CI 會跑 |
 | `install.sh`、`install.ps1`、`update.sh`、`update.ps1` | 安裝與更新 |
 | `docs/workflow.md` | 工作流說明 |
 
@@ -85,7 +86,7 @@ claude plugin install teamai@teamai-pstack
 2. 跑檢查：
 
 ```bash
-python3 scripts/validate.py && bash scripts/test_hook.sh
+python3 scripts/validate.py && bash scripts/test_hook.sh && bash scripts/test_review_panel.sh
 ```
 
 3. 用 `bash install.sh --local` 裝到本機，開新 session 試用。

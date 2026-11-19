@@ -21,7 +21,7 @@ description: teamAI 工作流導覽。使用者不確定現在該用哪個指令
 | 實作 | 跨檔案、原因不明的 bug、效能問題 | `/pstack:poteto-mode` |
 | 驗收 | 要證明真的能跑 | `/teamai:evidence`；重複驗的流程做成 `/pstack:create-verification-skill` |
 | 驗收 | 想知道這次改動會波及哪裡 | `/pstack:blast-radius` |
-| 驗收 | 合併前找漏洞 | `/pstack:interrogate`，再 `/teamai:agy-second-opinion` |
+| 驗收 | 合併前找漏洞 | `/pstack:interrogate`，再 `/teamai:cross-review`（GPT、Gemini、Grok 交叉審） |
 | 驗收 | 準備合併，要多個獨立 AI 實測 | `/pstack:swarm` |
 | 過夜 | 要交代無人看管的任務 | `/teamai:overnight`，執行時留 `/pstack:show-me-your-work` |
 | 修正 | 同一種錯出現第二次 | `/pstack:correct` |
