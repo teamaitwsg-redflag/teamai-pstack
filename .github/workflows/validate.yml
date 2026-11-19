@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     # 整套檢查不到一分鐘；卡住時十分鐘就停，不要佔著機器
     timeout-minutes: 10
