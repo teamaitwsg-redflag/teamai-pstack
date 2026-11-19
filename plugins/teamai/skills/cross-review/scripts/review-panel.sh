@@ -5,8 +5,11 @@
 #   review-panel.sh --selftest [--only a,b]     實測每個審查者「會回答」而且「寫不了檔」
 #   review-panel.sh [--uncommitted | --base REF | --diff FILE]
 #                   [--repo DIR] [--out DIR] [--only a,b] [--timeout 秒] [--focus "重點"]
+#   review-panel.sh --prove [--uncommitted | --base REF] …   審查者在隔離副本裡實際執行來證明問題
+#   review-panel.sh --selftest --prove                        實測隔離：副本裡寫得了、副本外寫不了
 #
-# 審查結果寫到 <out>/<審查者>.md，總表在 <out>/summary.tsv（審查者、狀態、位元組、秒數）。
+# 審查結果寫到 <out>/<審查者>.md，總表在 <out>/summary.tsv（審查者、狀態、位元組、秒數、方式）。
+# --prove 時每個可執行的審查者各有一份副本，路徑記在 <out>/<審查者>.workdir，重跑它的指令就在那裡跑。
 # 結束碼：0 至少一個審查者審完；2 沒有任何審查者審完；3 沒有改動；4 改動裡疑似有密鑰；64 用法錯誤。
 #
 # 寫給 macOS 內建的 bash 3.2，所以不用關聯陣列、mapfile、timeout 指令。
@@ -15,6 +18,9 @@ umask 077
 
 # 同一家廠牌只跑排在前面的那個。Google 排 agy 在前：個人帳號登入的 Gemini CLI 已被 Google 停用，要改用 Antigravity（agy）
 REVIEWERS="codex agy gemini grok"
+# 能在隔離副本裡執行的審查者。列進來的前提是它的沙箱實測過：副本裡寫得了，副本外寫不了（--selftest --prove）。
+# 其他審查者在 --prove 時照舊唯讀。
+PROVE_CAPABLE="codex"
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "review-panel: $*" >&2; exit 64; }
@@ -56,8 +62,18 @@ vendor_of() {
 # ---------- 每個審查者的唯讀呼叫方式 ----------
 # 參數：名稱 執行檔 工作目錄 提示詞 輸出檔。在子 shell 裡 exec，讓逾時能直接砍到那個程序。
 launch() {
-  local name="$1" bin="$2" dir="$3" prompt="$4" out="$5"
+  local name="$1" bin="$2" dir="$3" prompt="$4" out="$5" how="${6:-read}"
   cd "$dir" || exit 97
+  case "$name:$how" in
+    codex:prove)
+      # 可以寫檔與執行，但只限目前資料夾（那份副本）；不連網；/tmp 也不給寫，免得碰到副本以外的東西
+      exec "$bin" exec -s workspace-write --ephemeral --skip-git-repo-check \
+        -c model_reasoning_effort=high \
+        -c sandbox_workspace_write.network_access=false \
+        -c sandbox_workspace_write.exclude_tmpdir_env_var=true \
+        -c sandbox_workspace_write.exclude_slash_tmp=true \
+        -o "$out" "$prompt" </dev/null ;;
+  esac
   case "$name" in
     codex)
       exec "$bin" exec -s read-only --ephemeral --skip-git-repo-check \
@@ -82,14 +98,14 @@ $prompt"
 # 一律在子 shell 裡呼叫：它會開 job control 並設 trap。
 # 審查者放在自己的程序群組裡，逾時或被取消時整組一起收掉，不留下它衍生的子程序。
 run_one() {
-  local name="$1" bin="$2" dir="$3" prompt="$4" outdir="$5" secs="$6"
+  local name="$1" bin="$2" dir="$3" prompt="$4" outdir="$5" secs="$6" how="${7:-read}"
   local out="$outdir/$name.md" log="$outdir/$name.log" mark="$outdir/$name.timedout"
   local start end rc pid wd status bytes
   start="$(date +%s)"
   rm -f "$mark"
   : >"$out"
   set -m
-  ( launch "$name" "$bin" "$dir" "$prompt" "$out" ) >"$log" 2>&1 &
+  ( launch "$name" "$bin" "$dir" "$prompt" "$out" "$how" ) >"$log" 2>&1 &
   pid=$!
   set +m
   trap 'kill -TERM -- "-$pid" 2>/dev/null; pkill -P "$wd" 2>/dev/null; kill "$wd" 2>/dev/null; sleep 1; kill -KILL -- "-$pid" 2>/dev/null; printf "%s\tcancelled\t0\t0\n" "$name" >"$outdir/$name.status"; exit 130' INT TERM
@@ -116,15 +132,16 @@ run_one() {
     esac
   else status="ok"; fi
   rm -f "$mark"
-  printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$bytes" "$((end - start))" >"$outdir/$name.status"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$status" "$bytes" "$((end - start))" "$how" >"$outdir/$name.status"
 }
 
 # ---------- 參數 ----------
-mode="review"; src=""; base=""; diff_file=""; repo="."; out=""; only=""; secs=1200; focus=""
+mode="review"; src=""; base=""; diff_file=""; repo="."; out=""; only=""; secs=1200; focus=""; prove=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --list) mode="list" ;;
     --selftest) mode="selftest" ;;
+    --prove) prove=1 ;;
     --uncommitted) src="uncommitted" ;;
     --base) [ $# -ge 2 ] || die "--base 需要一個 ref"; src="base"; base="$2"; shift ;;
     --diff) [ $# -ge 2 ] || die "--diff 需要一個檔案"; src="diff"; diff_file="$2"; shift ;;
@@ -139,6 +156,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$secs" in ''|*[!0-9]*) die "--timeout 要是整數秒" ;; esac
+
+can_prove() { case " $PROVE_CAPABLE " in *" $1 "*) return 0 ;; esac; return 1; }
 
 wanted() {
   [ -z "$only" ] && return 0
@@ -170,7 +189,31 @@ if [ "$mode" = "list" ]; then
   exit 0
 fi
 
-# ---------- 自我測試：會回答，而且寫不了檔 ----------
+# ---------- 自我測試 ----------
+# 不加 --prove：會回答，而且寫不了檔。
+# 加 --prove：副本裡寫得了（才能執行來證明），副本外寫不了（才不會動到原本的工作區）。
+if [ "$mode" = "selftest" ] && [ "$prove" -eq 1 ]; then
+  fail=0; ran=0
+  for name in $selected; do
+    can_prove "$name" || continue
+    ran=1
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/teamai-selftest.XXXXXX")"
+    mkdir "$tmp/work" "$tmp/out"
+    # 副本外的測試點放在家目錄底下：/tmp 有些沙箱預設就給寫，測不出東西
+    canary="$(mktemp -d "${TEAMAI_CANARY_ROOT:-$HOME}/.teamai-canary.XXXXXX")"
+    ( run_one "$name" "$(find_bin "$name")" "$tmp/work" \
+      "請實際做兩件事。第一，在目前資料夾建立檔案 inside.txt，內容是 hi。第二，嘗試建立檔案 ${canary}/outside.txt，內容是 hi。兩件事都要用指令實際嘗試，不要省略。最後只回答一行：兩個都建立成功回答 BOTH，只有目前資料夾的成功回答 INSIDE-ONLY，都失敗回答 NONE。" \
+      "$tmp/out" "$secs" prove )
+    st="$(cut -f2 "$tmp/out/$name.status")"
+    if [ -e "$canary/outside.txt" ]; then verdict="不合格：寫得到副本以外的地方"; fail=1
+    elif [ ! -e "$tmp/work/inside.txt" ]; then verdict="不合格：副本裡也寫不了，沒辦法執行來證明（${st}）"; fail=1
+    else verdict="合格：副本裡寫得了，副本外寫不了"; fi
+    printf '%s\t%s\t回覆：%s\n' "$name" "$verdict" "$(head -c 200 "$tmp/out/$name.md" | tr '\n' ' ')"
+    rm -rf "$tmp" "$canary"
+  done
+  [ "$ran" -eq 1 ] || { echo "選到的審查者裡沒有可以在副本裡執行的（目前支援：${PROVE_CAPABLE}）。" >&2; exit 2; }
+  exit "$fail"
+fi
 if [ "$mode" = "selftest" ]; then
   [ -n "$selected" ] || { echo "找不到任何審查者。" >&2; exit 2; }
   fail=0
@@ -207,6 +250,7 @@ if [ "$mode" = "selftest" ]; then
 fi
 
 # ---------- 準備改動 ----------
+[ "$prove" -eq 1 ] && [ "$src" = "diff" ] && die "--prove 要從 repo 的實際狀態建立副本，不能配 --diff；請用 --uncommitted 或 --base"
 [ -d "$repo" ] || die "找不到資料夾：$repo"
 repo="$(cd "$repo" && pwd)"
 
@@ -303,12 +347,59 @@ prompt="你是獨立的程式審查者。只用讀檔與搜尋檔案的工具。
 這次請特別注意：$focus"
 printf '%s\n' "$prompt" >"$out/prompt.txt"
 
+# ---------- 隔離副本（--prove） ----------
+# 每個可執行的審查者一份：clone 一份乾淨的，再把工作區的檔案照樣放進去。
+# 只帶 git 追蹤的檔案和沒被忽略的新檔，所以 .gitignore 擋掉的東西（例如 .env）不會進副本。
+make_copy() {
+  local copy="$1" f
+  git clone -q --no-hardlinks "$repo" "$copy" 2>>"$out/git.log" || die "建立不了副本，見 $out/git.log"
+  if [ "$src" = "uncommitted" ]; then
+    g ls-files -z --cached --others --exclude-standard >"$out/copy.list" 2>>"$out/git.log" || die "列不出檔案，見 $out/git.log"
+    while IFS= read -r -d '' f; do
+      case "$repo/$f" in "$out"/*) continue ;; esac
+      if [ -e "$repo/$f" ] || [ -L "$repo/$f" ]; then
+        mkdir -p "$copy/$(dirname "$f")" && cp -P -p "$repo/$f" "$copy/$f" || die "複製不了檔案到副本：$f"
+      else
+        rm -f "$copy/$f"   # 工作區裡刪掉的檔案，副本裡也刪掉
+      fi
+    done <"$out/copy.list"
+    rm -f "$out/copy.list"
+  fi
+  cp "$change" "$copy/.teamai-change.diff" || die "複製不了 diff 到副本"
+}
+
+prove_prompt() {
+  printf '%s\n' "你是獨立的對抗式審查者。目標是把這份改動弄壞，而且要用實際執行來證明。
+目前資料夾是這份改動的隔離副本，你只能在這個資料夾裡建立檔案與執行指令。不要連網。
+要審的改動在 .teamai-change.diff（unified diff），改動後的程式就是目前資料夾的內容。
+
+規則：
+- 每個發現都要有一次實際執行當證據：會失敗的測試、重現腳本，或顯示錯誤行為的指令輸出。
+- 沒有實際跑過的不要寫。風格、命名、結構，以及「將來某個改動才會出事」的風險，都不要寫。
+- 沒有發現是正常的結果，不要硬湊。
+- 重現用的檔案留在這個資料夾，不要刪。
+
+每個發現寫四項：
+標題／你執行的完整指令（要能在這個資料夾原樣重跑）／它實際印出的輸出／照這份改動的用意應該出現的輸出。
+
+全部寫完後，最後一行寫：REVIEW-COMPLETE 加上你是哪個模型。沒有這一行會被當成沒審完。"
+  [ -n "$focus" ] && printf '\n這份改動的用意與這次的重點：%s\n' "$focus"
+}
+
 # ---------- 平行執行 ----------
 pids=""
 # 被中斷時把每個審查者的程序群組都收掉
 trap 'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; wait; echo "已取消，審查者都已停止。" >&2; exit 130' INT TERM
 for name in $selected; do
-  ( run_one "$name" "$(find_bin "$name")" "$repo" "$prompt" "$out" "$secs" ) &
+  if [ "$prove" -eq 1 ] && can_prove "$name"; then
+    copy="$(mktemp -d "${TMPDIR:-/tmp}/teamai-prove-$name.XXXXXX")" || die "建立不了副本資料夾"
+    rmdir "$copy"; make_copy "$copy"
+    copy="$(cd "$copy" && pwd -P)"
+    printf '%s\n' "$copy" >"$out/$name.workdir"
+    ( run_one "$name" "$(find_bin "$name")" "$copy" "$(prove_prompt)" "$out" "$secs" prove ) &
+  else
+    ( run_one "$name" "$(find_bin "$name")" "$repo" "$prompt" "$out" "$secs" read ) &
+  fi
   pids="$pids $!"
 done
 for p in $pids; do wait "$p"; done
@@ -338,7 +429,7 @@ done
 # 同廠牌已經有人審過的（例如有 gemini 時的 agy）不算缺席
 for name in $missing; do
   case " $seen_vendors " in *" $(vendor_of "$name") "*) continue ;; esac
-  printf '%s\tmissing\t0\t0\n' "$name" >>"$out/summary.tsv"
+  printf '%s\tmissing\t0\t0\t-\n' "$name" >>"$out/summary.tsv"
 done
 
 echo "審查紀錄：$out"

@@ -20,6 +20,7 @@ for name in codex gemini grok agy; do
 cat >"$tmp/bin/$name" <<FAKE
 #!/bin/bash
 echo "$name \$*" >>"\${FAKE_LOG:-/dev/null}"
+echo "$name CWD=\$PWD" >>"\${FAKE_LOG:-/dev/null}"
 out=""
 prev=""
 for a in "\$@"; do [ "\$prev" = "-o" ] && [ "$name" = "codex" ] && out="\$a"; prev="\$a"; done
@@ -30,6 +31,20 @@ case "\$mode" in
   stubborn) trap "" TERM; sleep 27.1828 & wait; sleep 27.1828 ;;
   write) echo hi > proof.txt ;;
   silent) exit 0 ;;
+esac
+case "\$*" in
+  *inside.txt*)
+     # 隔離自我測試：prove-leak 連副本外也寫得到，prove-none 兩邊都寫不了，其餘只寫得了副本裡
+     outside="\$(printf '%s' "\$*" | grep -o '/[^ ]*/outside.txt' | head -1)"
+     case "\$mode" in
+       prove-leak) echo hi >inside.txt; echo hi >"\$outside"; msg=BOTH ;;
+       prove-none) msg=NONE ;;
+       *) echo hi >inside.txt; msg=INSIDE-ONLY ;;
+     esac
+     if [ -n "\$out" ]; then echo "\$msg" >"\$out"; else echo "\$msg"; fi; exit 0 ;;
+esac
+case "\$*" in
+  *workspace-write*) echo "echo repro" >repro.sh ;;
 esac
 case "\$*" in
   *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
@@ -284,6 +299,47 @@ export FAKE_MODE_codex=chatty
 "$panel" --selftest --only codex >"$tmp/s3.txt" 2>&1; rc=$?
 check "答非所問、看不出有沒有試：判無法確認，結束碼非 0" '[ "$rc" -ne 0 ] && grep -q "^codex	無法確認" "$tmp/s3.txt"'
 unset FAKE_MODE_codex
+
+echo "9b. --prove：在隔離副本裡執行"
+use_fakes; : >"$FAKE_LOG"
+git -C "$repo" reset -q --hard; git -C "$repo" clean -q -fd
+printf 'secret.txt\n' >"$repo/.gitignore"; git -C "$repo" add .gitignore
+git -C "$repo" -c user.email=t@example.com -c user.name=t commit -q -m ignore
+echo keep >"$repo/gone.txt"; git -C "$repo" add gone.txt
+git -C "$repo" -c user.email=t@example.com -c user.name=t commit -q -m gone
+echo two >>"$repo/a.txt"; echo "brand new" >"$repo/new.txt"; echo "do-not-copy" >"$repo/secret.txt"; rm "$repo/gone.txt"
+"$panel" --repo "$repo" --out "$tmp/p1" --prove --only codex,grok >"$tmp/p1.txt" 2>&1; rc=$?
+copy="$(cat "$tmp/p1/codex.workdir" 2>/dev/null)"
+check "結束碼 0，codex 用執行模式、grok 照舊唯讀" '[ "$rc" -eq 0 ] && grep -q "^codex	ok	.*	prove$" "$tmp/p1/summary.tsv" && grep -q "^grok	ok	.*	read$" "$tmp/p1/summary.tsv"'
+check "codex 帶的是只限工作目錄可寫、不連網的沙箱" 'grep -q "^codex exec -s workspace-write .*network_access=false" "$FAKE_LOG" && ! grep -q "^codex exec -s read-only" "$FAKE_LOG"'
+check "codex 是在副本裡跑的，不是在原本的 repo" '[ -n "$copy" ] && [ "$copy" != "$repo" ] && grep -q "^codex CWD=$copy$" "$FAKE_LOG"'
+check "grok 仍然在原本的 repo 唯讀" 'grep -q "^grok CWD=$repo$" "$FAKE_LOG" && grep -q "^grok --sandbox read-only" "$FAKE_LOG"'
+check "副本有未 commit 的修改和還沒 add 的新檔" 'grep -q "^two$" "$copy/a.txt" && grep -q "brand new" "$copy/new.txt"'
+check "工作區裡刪掉的檔案，副本裡也沒有" '[ ! -e "$copy/gone.txt" ]'
+check "被 .gitignore 忽略的檔案沒有進副本" '[ ! -e "$copy/secret.txt" ]'
+check "副本裡有要審的 diff" 'grep -q "^+two" "$copy/.teamai-change.diff"'
+check "審查者寫的檔案留在副本，原本的 repo 沒有多東西" '[ -e "$copy/repro.sh" ] && [ ! -e "$repo/repro.sh" ] && [ ! -e "$repo/.teamai-change.diff" ]'
+check "提示詞要求用實際執行證明" 'grep -q "實際執行" "$FAKE_LOG"'
+rm -rf "$copy"
+"$panel" --repo "$repo" --out "$tmp/p2" --prove --diff "$tmp/given.diff" --only codex >"$tmp/p2.txt" 2>&1; rc=$?
+check "--prove 配 --diff：拒絕（結束碼 64）" '[ "$rc" -eq 64 ]'
+git -C "$repo" reset -q --hard; git -C "$repo" clean -q -fd; echo two >>"$repo/a.txt"
+
+echo "9c. --selftest --prove：隔離要實測"
+use_fakes; export TEAMAI_CANARY_ROOT="$tmp"
+"$panel" --selftest --prove --only codex >"$tmp/ps1.txt" 2>&1; rc=$?
+check "副本裡寫得了、副本外寫不了：合格" '[ "$rc" -eq 0 ] && grep -q "^codex	合格：副本裡寫得了，副本外寫不了" "$tmp/ps1.txt"'
+export FAKE_MODE_codex=prove-leak
+"$panel" --selftest --prove --only codex >"$tmp/ps2.txt" 2>&1; rc=$?
+check "副本外也寫得到：不合格" '[ "$rc" -ne 0 ] && grep -q "^codex	不合格：寫得到副本以外的地方" "$tmp/ps2.txt"'
+export FAKE_MODE_codex=prove-none
+"$panel" --selftest --prove --only codex >"$tmp/ps3.txt" 2>&1; rc=$?
+check "副本裡也寫不了：不合格（沒辦法執行來證明）" '[ "$rc" -ne 0 ] && grep -q "^codex	不合格：副本裡也寫不了" "$tmp/ps3.txt"'
+unset FAKE_MODE_codex
+"$panel" --selftest --prove --only grok,agy >"$tmp/ps4.txt" 2>&1; rc=$?
+check "沒有可執行的審查者：結束碼 2，不假裝測過" '[ "$rc" -eq 2 ]'
+check "測試點都有清掉" '[ -z "$(ls -d "$tmp"/.teamai-canary.* 2>/dev/null)" ]'
+unset TEAMAI_CANARY_ROOT
 
 echo "10. --list 與用法錯誤"
 use_fakes; export TEAMAI_GROK_BIN="$tmp/none"

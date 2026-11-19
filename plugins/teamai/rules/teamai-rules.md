@@ -20,7 +20,7 @@
 - 照專案裡最近的同類寫法做，不另創一套。
 
 ## 驗收與合併
-- 重要變更合併前要有兩道獨立檢查：`/pstack:interrogate`（不同 Claude 模型交叉），加上跨廠牌審核團（`/teamai:cross-review`，把改動交給本機的 Codex、Gemini、Grok 唯讀審查）。同廠牌換模型不算跨廠牌。
+- 重要變更合併前要有兩道獨立檢查：`/pstack:interrogate`（不同 Claude 模型交叉），加上跨廠牌審核團（`/teamai:cross-review`，把改動交給本機的 Codex、Gemini、Grok 獨立審查；程式碼改動用執行模式，審查者在隔離副本裡用實際執行證明問題）。同廠牌換模型不算跨廠牌。審查者提的發現，主對話自己重跑過才算數。
 - 改到共用核心邏輯時先跑 `/pstack:blast-radius`，把影響範圍告訴使用者，請人仔細看。
 - 使用者沒要求就不開 PR、不 force push、不動別人的分支。commit 訊息寫「為什麼改」，不只寫「改了什麼」。
 - 無人看管的長時間工作留決策紀錄（`/pstack:show-me-your-work`），任務單用 `/teamai:overnight` 寫。
