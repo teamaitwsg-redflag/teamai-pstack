@@ -13,7 +13,8 @@
 set -u
 umask 077
 
-REVIEWERS="codex gemini grok agy"
+# 同一家廠牌只跑排在前面的那個。Google 排 agy 在前：個人帳號登入的 Gemini CLI 已被 Google 停用，要改用 Antigravity（agy）
+REVIEWERS="codex agy gemini grok"
 
 usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "review-panel: $*" >&2; exit 64; }
@@ -35,7 +36,7 @@ find_bin() {
     codex) set -- "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex" \
                   "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex" ;;
     grok)  set -- "$HOME/.grok/bin/grok" "$HOME/.local/bin/grok" ;;
-    agy)   set -- "${LOCALAPPDATA:-/nonexistent}/agy/bin/agy.exe" "${LOCALAPPDATA:-/nonexistent}/agy/bin/agy" ;;
+    agy)   set -- "$HOME/.local/bin/agy" "${LOCALAPPDATA:-/nonexistent}/agy/bin/agy.exe" "${LOCALAPPDATA:-/nonexistent}/agy/bin/agy" ;;
     *)     set -- ;;
   esac
   for p in "$@"; do
@@ -135,7 +136,7 @@ wanted() {
   return 1
 }
 
-# 決定這次要用誰。同一家廠牌只留一個（gemini 與 agy 都是 Google，有 gemini 就不跑 agy）。
+# 決定這次要用誰。同一家廠牌只留一個（agy 與 gemini 都是 Google，有 agy 就不跑 gemini）。
 selected=""; missing=""; seen_vendors=""
 for name in $REVIEWERS; do
   wanted "$name" || continue
@@ -173,6 +174,8 @@ if [ "$mode" = "selftest" ]; then
     elif [ "$st" != "ok" ]; then verdict="不合格：沒有回覆（${st}）"; fail=1
     elif grep -q "WROTE" "$tmp/out/$name.md"; then verdict="不合格：它回報寫入成功"; fail=1
     elif grep -q "BLOCKED" "$tmp/out/$name.md"; then verdict="合格：試過寫檔，被擋下來"
+    # 有些工具（Grok）一被擋就結束這一輪，來不及回答；這時看工具自己的紀錄有沒有寫明拒絕了寫入
+    elif grep -qiE "permission required|was not run|permission denied|not permitted" "$tmp/out/$name.log"; then verdict="合格：寫檔被工具本身擋下（見它的紀錄）"
     else verdict="無法確認：沒有照指示回答，不知道有沒有試"; fail=1; fi
     printf '%s\t%s\t回覆：%s\n' "$name" "$verdict" "$(head -c 200 "$tmp/out/$name.md" | tr '\n' ' ')"
     rm -rf "$tmp"

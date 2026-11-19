@@ -10,7 +10,8 @@ ok() { pass=$((pass + 1)); echo "  通過：$1"; }
 bad() { failn=$((failn + 1)); echo "  失敗：$1"; }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
-# 假的審查者。行為由 FAKE_MODE 決定：reply（預設）、fail、hang、stubborn、write、chatty、silent。
+# 假的審查者。行為由 FAKE_MODE 決定：reply（預設）、fail、hang、stubborn、write、chatty、refused、silent。
+# refused 模仿 Grok：寫檔被工具擋下後整輪結束，只在 stderr 留下拒絕訊息。
 # hang 會衍生一個子程序；stubborn 不理會 TERM；chatty 在自我測試時答非所問。
 # 會把收到的參數記到 $FAKE_LOG，測試用它確認唯讀旗標真的有帶。
 mkdir -p "$tmp/bin"
@@ -30,7 +31,8 @@ case "\$mode" in
   silent) exit 0 ;;
 esac
 case "\$*" in
-  *proof.txt*) if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
+  *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
+     if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
      if [ -n "\$out" ]; then echo "\$msg" >"\$out"; else echo "\$msg"; fi; exit 0 ;;
 esac
 if [ -n "\$out" ]; then echo "[低] a.txt:1 — $name 的發現" >"\$out"; else echo "[低] a.txt:1 — $name 的發現"; fi
@@ -53,16 +55,16 @@ echo "1. 三家都在：平行執行，各自有結果"
 use_fakes; : >"$FAKE_LOG"
 "$panel" --repo "$repo" --out "$tmp/o1" >"$tmp/o1.txt" 2>&1; rc=$?
 check "結束碼 0" '[ "$rc" -eq 0 ]'
-check "codex、gemini、grok 都是 ok" '[ "$(grep -c "	ok	" "$tmp/o1/summary.tsv")" -eq 3 ]'
-check "同廠牌只跑一個：有 gemini 就不跑 agy" '! grep -q "^agy" "$tmp/o1/summary.tsv" && ! grep -q "^agy " "$FAKE_LOG"'
+check "codex、agy、grok 都是 ok" '[ "$(grep -c "	ok	" "$tmp/o1/summary.tsv")" -eq 3 ]'
+check "同廠牌只跑一個：有 agy 就不跑 gemini" '! grep -q "^gemini" "$tmp/o1/summary.tsv" && ! grep -q "^gemini " "$FAKE_LOG"'
 check "各自的審查結果有內容" 'grep -q "codex 的發現" "$tmp/o1/codex.md" && grep -q "grok 的發現" "$tmp/o1/grok.md"'
 check "改動有存成 change.diff" 'grep -q "^+two" "$tmp/o1/change.diff"'
 check "codex 帶了唯讀旗標" 'grep -q "^codex exec -s read-only" "$FAKE_LOG"'
-check "gemini 帶了 plan 模式" 'grep -q "^gemini --approval-mode plan" "$FAKE_LOG"'
+check "agy 帶了 plan 模式" 'grep -q "^agy --mode plan" "$FAKE_LOG"'
 check "grok 帶了唯讀沙箱" 'grep -q "^grok --sandbox read-only" "$FAKE_LOG"'
 
 echo "2. 有人沒裝、有人失敗：照實記錄，其他人不受影響"
-use_fakes; export TEAMAI_GROK_BIN="$tmp/none" TEAMAI_AGY_BIN="$tmp/none" FAKE_MODE_gemini=fail
+use_fakes; export TEAMAI_GROK_BIN="$tmp/none" TEAMAI_AGY_BIN="$tmp/none" FAKE_MODE_gemini=fail; : >"$FAKE_LOG"
 "$panel" --repo "$repo" --out "$tmp/o2" >"$tmp/o2.txt" 2>&1; rc=$?
 check "還有一家成功所以結束碼 0" '[ "$rc" -eq 0 ]'
 check "grok 記為 missing" 'grep -q "^grok	missing" "$tmp/o2/summary.tsv"'
@@ -178,12 +180,15 @@ check "--diff 指到不存在的檔案：結束碼 64" '[ "$rc" -eq 64 ]'
 "$panel" --repo "$repo" --out "$tmp/o7e" --only codex >"$tmp/o7g.txt" 2>&1; rc=$?
 check "--out 指到已經有東西的資料夾：拒絕（結束碼 64）" '[ "$rc" -eq 64 ]'
 
-echo "7d. 沒有 gemini 時改用 agy"
+echo "7d. Google 這一家：有 agy 用 agy，沒有才用 gemini"
 use_fakes; export TEAMAI_GEMINI_BIN="$tmp/none"; : >"$FAKE_LOG"
 "$panel" --repo "$repo" --out "$tmp/o7h" >"$tmp/o7h.txt" 2>&1; rc=$?
 check "agy 有跑而且是 ok" 'grep -q "^agy	ok" "$tmp/o7h/summary.tsv"'
-check "agy 帶了 plan 模式，提示詞有禁止 shell" 'grep -q "^agy --mode plan" "$FAKE_LOG" && grep -q "禁止執行任何 shell 指令" "$FAKE_LOG"'
+check "agy 的提示詞有禁止 shell" 'grep -q "禁止執行任何 shell 指令" "$FAKE_LOG"'
 check "同廠牌已有 agy，gemini 不列為缺席" '! grep -q "^gemini" "$tmp/o7h/summary.tsv"'
+use_fakes; export TEAMAI_AGY_BIN="$tmp/none"; : >"$FAKE_LOG"
+"$panel" --repo "$repo" --out "$tmp/o7i" >"$tmp/o7i.txt" 2>&1; rc=$?
+check "沒有 agy 時改用 gemini，帶 plan 模式" 'grep -q "^gemini	ok" "$tmp/o7i/summary.tsv" && grep -q "^gemini --approval-mode plan" "$FAKE_LOG"'
 
 echo "8. 預設輸出資料夾在 repo 裡，而且不會被 git 看到"
 use_fakes
@@ -199,6 +204,10 @@ export FAKE_MODE_grok=write
 "$panel" --selftest --only codex,grok >"$tmp/s2.txt" 2>&1; rc=$?
 check "會寫檔的審查者：結束碼非 0" '[ "$rc" -ne 0 ]'
 check "點名 grok 寫得了檔" 'grep -q "^grok	不合格：寫得了檔" "$tmp/s2.txt"'
+unset FAKE_MODE_grok
+export FAKE_MODE_grok=refused
+"$panel" --selftest --only grok >"$tmp/s4.txt" 2>&1; rc=$?
+check "被工具擋下後沒回答、但紀錄寫明拒絕寫入：合格" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下" "$tmp/s4.txt"'
 unset FAKE_MODE_grok
 export FAKE_MODE_codex=chatty
 "$panel" --selftest --only codex >"$tmp/s3.txt" 2>&1; rc=$?

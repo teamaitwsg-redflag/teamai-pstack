@@ -9,6 +9,7 @@
 #   Grok CLI    ~/.grok/AGENTS.md
 #   Codex       ~/.codex/AGENTS.md
 #   Gemini CLI  ~/.gemini/GEMINI.md
+#   Antigravity ~/.gemini/config/AGENTS.md
 # 只改兩個標記之間的區塊；檔案裡原本的內容不動。可以重複執行。
 set -u
 
@@ -54,7 +55,8 @@ strip_block() {
 # 名稱<TAB>判斷有沒有裝的資料夾<TAB>規則檔
 targets="grok	$HOME/.grok	$HOME/.grok/AGENTS.md
 codex	$HOME/.codex	$HOME/.codex/AGENTS.md
-gemini	$HOME/.gemini	$HOME/.gemini/GEMINI.md"
+gemini	$HOME/.gemini	$HOME/.gemini/GEMINI.md
+agy	$HOME/.gemini/config	$HOME/.gemini/config/AGENTS.md"
 
 stale=0
 tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.new"' EXIT

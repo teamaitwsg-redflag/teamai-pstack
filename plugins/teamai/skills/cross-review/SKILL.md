@@ -32,9 +32,9 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 | 審查者 | 廠牌 | 唯讀的做法 |
 |---|---|---|
 | `codex` | OpenAI | `codex exec -s read-only` |
-| `gemini` | Google | `gemini --approval-mode plan` |
+| `agy` | Google | `agy --mode plan` |
+| `gemini` | Google | `gemini --approval-mode plan`（沒有 agy 時才用，同廠牌只跑一個） |
 | `grok` | xAI | `grok --sandbox read-only` |
-| `agy` | Google | `agy --mode plan`（沒有 gemini 時才用，同廠牌只跑一個） |
 
 一個都沒有時，告訴使用者缺什麼、怎麼裝（見最後一節），然後只做 `/pstack:interrogate`，並在回報裡明說少了跨廠牌這一道。
 
@@ -107,10 +107,10 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 | 審查者 | 安裝 | 登入 |
 |---|---|---|
 | codex | 裝 ChatGPT／Codex 桌面版就有（腳本會自己找到 App 內附的 CLI），或 `npm install -g @openai/codex` | `codex login` |
-| gemini | `npm install -g @google/gemini-cli` | 在終端機執行 `gemini`，依畫面用 Google 帳號登入 |
+| agy | macOS、Linux：`curl -fsSL https://antigravity.google/cli/install.sh \| bash`；Windows 見 `/teamai:agy-second-opinion` | 在終端機執行 `agy`，依畫面用 Google 帳號登入 |
+| gemini | `npm install -g @google/gemini-cli` | 只適用 API key 或企業帳號。個人 Google 帳號登入已被 Google 停用（2026-11 實測，錯誤訊息要求改用 Antigravity），個人帳號請裝 agy |
 | grok | `curl -fsSL https://x.ai/cli/install.sh \| bash` | `grok login`（需要 SuperGrok 或 X Premium+） |
-| agy | 見 `/teamai:agy-second-opinion` | 同上 |
 
 工具裝在非標準位置時，用環境變數指定：`TEAMAI_CODEX_BIN`、`TEAMAI_GEMINI_BIN`、`TEAMAI_GROK_BIN`、`TEAMAI_AGY_BIN`。
 
-裝好之後一定跑一次 `<panel> --selftest`。Grok 的唯讀旗標是依公開文章寫的，沒有在真的 Grok 上測過，第一次使用時以自我測試的結果為準。
+裝好之後一定跑一次 `<panel> --selftest`。實測紀錄（2026-11，macOS）：Codex 0.169 與 Grok 1.0.89 都擋得住寫檔。Grok 被擋之後會直接結束那一輪、不會回答，自我測試是看它自己的紀錄判定的。

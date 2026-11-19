@@ -14,6 +14,7 @@ Claude Code 的規則是靠 plugin 在 session 開始時載入的，其他工具
 | Grok CLI | `~/.grok/AGENTS.md` | Grok CLI 也會自動讀到 Claude Code 裝的 plugin skill |
 | Codex（ChatGPT 桌面版內附） | `~/.codex/AGENTS.md` | |
 | Gemini CLI | `~/.gemini/GEMINI.md` | |
+| Antigravity（agy） | `~/.gemini/config/AGENTS.md` | |
 
 ## 步驟
 
