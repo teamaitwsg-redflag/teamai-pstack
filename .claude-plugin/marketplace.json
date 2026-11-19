@@ -1,0 +1,12 @@
+{
+  "name": "teamai-pstack",
+  "owner": { "name": "teamAI" },
+  "description": "teamAI 寫程式與工作用的 Claude Code 工作流：共用規則、信任曲線，以及搭配 pstack 使用的 skill。",
+  "plugins": [
+    {
+      "name": "teamai",
+      "source": "./plugins/teamai",
+      "description": "teamAI 工作流：需求釐清、交件附證據、信任曲線、過夜任務單、跨廠牌第二意見，並在每個 session 載入共用規則與 pstack 模型分工表。"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "teamai",
+  "displayName": "teamAI 工作流",
+  "description": "teamAI 寫程式與工作用的工作流：需求釐清、交件附證據、信任曲線、過夜任務單、跨廠牌第二意見。搭配 pstack 使用。",
+  "author": { "name": "teamAI" },
+  "keywords": ["workflow", "pstack", "review", "verification", "zh-TW"]
+}
