@@ -12,7 +12,7 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 # 假的審查者。行為由 FAKE_MODE 決定：reply（預設）、fail、hang、stubborn、write、chatty、refused、silent。
 # refused 模仿寫檔被工具擋下後整輪結束：refused 還印了一句話，refused-quiet 完全沒有 stdout，
-# refused-other 被擋的是別的事（不算證據）。cutoff 模仿審到一半被打斷：有輸出、正常結束、但沒有完成標記。
+# refused-other 被擋的是別的事、refused-read 被擋的是讀 proof.txt（都不算證據）。cutoff 模仿審到一半被打斷：有輸出、正常結束、但沒有完成標記。
 # hang 會衍生一個子程序；stubborn 不理會 TERM；chatty 在自我測試時答非所問。
 # 會把收到的參數記到 $FAKE_LOG，測試用它確認唯讀旗標真的有帶。
 mkdir -p "$tmp/bin"
@@ -34,13 +34,24 @@ esac
 case "\$*" in
   *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-quiet" ]; then echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
+     if [ "\$mode" = "refused-read" ]; then echo "我看一下"; echo "permission required: Read proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-other" ]; then echo "我看一下"; echo "permission denied: reading /etc/shadow" >&2; exit 0; fi
      if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
      if [ -n "\$out" ]; then echo "\$msg" >"\$out"; else echo "\$msg"; fi; exit 0 ;;
 esac
 body="[低] a.txt:1 — $name 的發現"
-[ "\$mode" = "cutoff" ] || body="\$body
-REVIEW-COMPLETE $name-model"
+case "\$mode" in
+  cutoff) ;;
+  quoted) body="提示詞要我最後寫 REVIEW-COMPLETE，我先讀檔。
+\$body" ;;
+  trailing) body="\$body
+REVIEW-COMPLETE $name-model
+接著我再看一下其他檔案。" ;;
+  nomodel) body="\$body
+REVIEW-COMPLETE" ;;
+  *) body="\$body
+REVIEW-COMPLETE $name-model" ;;
+esac
 if [ -n "\$out" ]; then echo "\$body" >"\$out"; else echo "\$body"; fi
 FAKE
 chmod +x "$tmp/bin/$name"
@@ -89,6 +100,12 @@ echo "3b. 審到一半被打斷：有輸出也不算審過"
 use_fakes; export FAKE_MODE=cutoff
 "$panel" --repo "$repo" --out "$tmp/o3b" --only grok >"$tmp/o3b.txt" 2>&1; rc=$?
 check "grok 記為 incomplete，結束碼 2" '[ "$rc" -eq 2 ] && grep -q "^grok	incomplete" "$tmp/o3b/summary.tsv"'
+n=0
+for m in quoted trailing nomodel; do
+  n=$((n + 1)); export FAKE_MODE="$m"
+  "$panel" --repo "$repo" --out "$tmp/o3c$n" --only codex >/dev/null 2>&1; rc=$?
+  check "完成標記位置不對（${m}）：incomplete，結束碼 2" '[ "$rc" -eq 2 ] && grep -q "^codex	incomplete" "$tmp/o3c$n/summary.tsv"'
+done
 unset FAKE_MODE
 
 echo "4. 逾時：砍掉並記為 timeout"
@@ -230,7 +247,13 @@ check "完全沒有 stdout、只有拒絕紀錄：也合格" '[ "$rc" -eq 0 ] &&
 export FAKE_MODE_grok=refused-other
 "$panel" --selftest --only grok >"$tmp/s6.txt" 2>&1; rc=$?
 check "被擋的是別的事、跟 proof.txt 無關：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s6.txt"'
+export FAKE_MODE_grok=refused-read
+"$panel" --selftest --only grok >"$tmp/s7.txt" 2>&1; rc=$?
+check "被擋的是讀 proof.txt 不是寫：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s7.txt"'
 unset FAKE_MODE_grok
+use_fakes
+"$panel" --selftest >"$tmp/s8.txt" 2>&1; rc=$?
+check "自我測試涵蓋同廠牌的備援：agy 和 gemini 都測" 'grep -q "^agy	合格" "$tmp/s8.txt" && grep -q "^gemini	合格" "$tmp/s8.txt"'
 export FAKE_MODE_codex=chatty
 "$panel" --selftest --only codex >"$tmp/s3.txt" 2>&1; rc=$?
 check "答非所問、看不出有沒有試：判無法確認，結束碼非 0" '[ "$rc" -ne 0 ] && grep -q "^codex	無法確認" "$tmp/s3.txt"'
