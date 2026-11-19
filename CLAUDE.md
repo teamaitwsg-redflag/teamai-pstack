@@ -6,7 +6,8 @@
 
 ## 這個 repo 專屬的規則
 - 這是公開性質的工具包。公司名稱、logo、案件資料、客戶資料、人名、內部主機與個人電腦路徑都不放進來。`scripts/validate.py` 會擋一部分，但不能只靠它。
-- 改完一定跑 `python3 scripts/validate.py`、`bash scripts/test_hook.sh`、`bash scripts/test_review_panel.sh`，三個都過才 commit。CI 跑的是同樣三支。
+- 改完一定跑 `python3 scripts/validate.py` 和 `scripts/` 底下的三支 `test_*.sh`，全部都過才 commit。CI 跑的是同樣這幾支。
+- 規則檔改了之後，其他 AI 工具要重新同步才拿得到（`/teamai:sync-agents`）。
 - 新增或修改 skill：資料夾名稱等於 frontmatter 的 `name`；`description` 寫清楚什麼時候用、什麼時候不用。指令名稱會是 `/teamai:<name>`。
 - 規則寫在 `plugins/teamai/rules/teamai-rules.md`。它每個 session 都會被載入，所以要短：只放每次都用得到的規則，流程細節放進 skill。
 - 同一種錯出現第二次時，優先在 `scripts/validate.py` 加一條檢查，不是在這裡加一句提醒。

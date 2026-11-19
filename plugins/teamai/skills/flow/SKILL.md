@@ -27,6 +27,7 @@ description: teamAI 工作流導覽。使用者不確定現在該用哪個指令
 | 修正 | 同一種錯出現第二次 | `/pstack:correct` |
 | 修正 | 回顧這段時間做了什麼、學到什麼 | `/pstack:ketchup`、`/pstack:reflect` |
 | 管理 | 想知道專案可以放手到什麼程度 | `/teamai:trust-ladder` |
+| 管理 | 要讓 Grok、Codex、Gemini 也照同一套規則 | `/teamai:sync-agents` |
 
 ## 兩種起手式
 
