@@ -34,7 +34,13 @@ esac
 case "\$*" in
   *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-quiet" ]; then echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
-     if [ "\$mode" = "refused-agy" ]; then echo "jetski: no output produced — a tool required the \\"write_file\\" permission that headless mode cannot prompt for, so it was auto-denied." >&2; exit 0; fi
+     case "\$mode" in
+       refused-agy|refused-agy-command|refused-agy-read)
+         perm=write_file; [ "\$mode" = "refused-agy-command" ] && perm=command; [ "\$mode" = "refused-agy-read" ] && perm=read_file
+         echo "jetski: no output produced — a tool required the \\"\$perm\\" permission that headless mode cannot prompt for, so it was auto-denied." >&2; exit 0 ;;
+       refused-touch) echo "permission denied: touch proof.txt" >&2; exit 0 ;;
+       refused-write-other) echo "我看一下"; echo "permission denied: Write other.txt" >&2; exit 0 ;;
+     esac
      if [ "\$mode" = "refused-read" ]; then echo "我看一下"; echo "permission required: Read proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-other" ]; then echo "我看一下"; echo "permission denied: reading /etc/shadow" >&2; exit 0; fi
      if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
@@ -251,7 +257,22 @@ check "被擋的是別的事、跟 proof.txt 無關：不算證據，判無法�
 use_fakes; export FAKE_MODE_agy=refused-agy
 "$panel" --selftest --only agy >"$tmp/s9.txt" 2>&1; rc=$?
 check "agy 的拒絕寫法（write_file 權限被自動拒絕、沒有任何 stdout）：合格" '[ "$rc" -eq 0 ] && grep -q "^agy	合格：寫檔被工具本身擋下" "$tmp/s9.txt"'
+export FAKE_MODE_agy=refused-agy-command
+"$panel" --selftest --only agy >"$tmp/s10.txt" 2>&1; rc=$?
+check "agy 用 shell 建檔被自動拒絕（command 權限）：合格" '[ "$rc" -eq 0 ] && grep -q "^agy	合格：寫檔被工具本身擋下" "$tmp/s10.txt"'
+export FAKE_MODE_agy=refused-agy-read
+"$panel" --selftest --only agy >"$tmp/s11.txt" 2>&1; rc=$?
+check "agy 被拒的是讀檔權限：不算證據" '[ "$rc" -ne 0 ] && ! grep -q "合格：" "$tmp/s11.txt"'
 unset FAKE_MODE_agy
+export FAKE_MODE_grok=refused-agy
+"$panel" --selftest --only grok >"$tmp/s12.txt" 2>&1; rc=$?
+check "agy 的專用格式只對 agy 有效，別的審查者印出同樣的話不算" '[ "$rc" -ne 0 ] && ! grep -q "合格：" "$tmp/s12.txt"'
+export FAKE_MODE_grok=refused-touch
+"$panel" --selftest --only grok >"$tmp/s13.txt" 2>&1; rc=$?
+check "用 touch 建 proof.txt 被拒：合格" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下" "$tmp/s13.txt"'
+export FAKE_MODE_grok=refused-write-other
+"$panel" --selftest --only grok >"$tmp/s14.txt" 2>&1; rc=$?
+check "被拒的是寫別的檔、跟 proof.txt 無關：不算證據" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s14.txt"'
 export FAKE_MODE_grok=refused-read
 "$panel" --selftest --only grok >"$tmp/s7.txt" 2>&1; rc=$?
 check "被擋的是讀 proof.txt 不是寫：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s7.txt"'

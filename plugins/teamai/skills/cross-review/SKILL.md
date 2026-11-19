@@ -113,4 +113,4 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 
 工具裝在非標準位置時，用環境變數指定：`TEAMAI_CODEX_BIN`、`TEAMAI_GEMINI_BIN`、`TEAMAI_GROK_BIN`、`TEAMAI_AGY_BIN`。
 
-裝好之後一定跑一次 `<panel> --selftest`。實測紀錄（2026-11，macOS）：Codex 0.169、agy 1.5.12、Grok 1.0.89 都擋得住寫檔。agy 和 Grok 被擋之後整輪直接結束、不輸出內容，自我測試是看它們自己紀錄裡的拒絕訊息判定的。Grok 在無人看管時只要叫了需要核准的工具（寫檔、上網），整輪就直接結束而且回報成功，所以腳本只給它讀檔工具。Google 這一家 agy 沒成功時（例如沒登入），腳本會自動換 gemini 再試一次。
+裝好之後一定跑一次 `<panel> --selftest`。實測紀錄（2026-11，macOS）：Codex 0.169、agy 1.5.12、Grok 1.0.89 都擋得住寫檔。agy 和 Grok 被擋之後整輪直接結束、不輸出內容，自我測試是看它們自己紀錄裡的拒絕訊息判定的：一般要同一行提到 `proof.txt` 與寫入動作；agy 的訊息不帶檔名，另外認它的「write_file 或 command 權限被自動拒絕」這個格式。Grok 在無人看管時只要叫了需要核准的工具（寫檔、上網），整輪就直接結束而且回報成功，所以腳本只給它讀檔工具。Google 這一家 agy 沒成功時（例如沒登入），腳本會自動換 gemini 再試一次。
