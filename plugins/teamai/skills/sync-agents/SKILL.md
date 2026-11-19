@@ -41,5 +41,16 @@ Claude Code 的規則是靠 plugin 在 session 開始時載入的，其他工具
 - 腳本只改兩個標記之間的區塊，檔案裡使用者原本寫的內容不動。重複執行結果相同。
 - teamai plugin 更新後規則可能變了，再跑一次就會更新。
 - 要拿掉：`<sync> --remove`。
-- 桌面版 App（Grok Bot、Gemini、ChatGPT 的聊天視窗）裡的 agent 如果不讀上面這些檔案，就要使用者自己在那個 App 的「自訂指示」之類的設定貼上規則。規則全文在 plugin 的 `rules/teamai-rules.md`。不確定某個 App 讀不讀檔案時，用步驟 3 的問法實測，不要假設。
+- 桌面版 App 讀不讀這些檔案，各家不同（2026-11 在 macOS 上查證）：
+
+| App | 讀不讀命令列的規則檔 | 依據 |
+|---|---|---|
+| ChatGPT 的本機 Codex 模式 | 讀，和命令列同一份 | 對話紀錄檔裡注入的規則區塊，指紋和 `~/.codex/AGENTS.md` 的相同 |
+| ChatGPT 的一般聊天 | 沒有驗證過 | |
+| Gemini 桌面版 | 不讀 | 程式裡沒有 `GEMINI.md` 或全域規則檔的讀取；它的 skill 存在帳號那一端，不在這台電腦上 |
+| Grok Bot 桌面版 | 不讀 | 程式裡沒有 `AGENTS.md`、`CLAUDE.md`；它用的是 App 內每個 bot 自己的自訂指示，資料夾是 `~/.grokbot`，和 Grok CLI 的 `~/.grok` 無關 |
+
+  不讀檔的 App 只能由使用者在 App 自己的自訂指示裡貼上規則，而且之後規則更新不會自動同步。規則全文在 plugin 的 `rules/teamai-rules.md`。
+- 驗證 ChatGPT 本機 Codex 模式時，不必操作畫面，也不必問模型：每個對話都存成 `~/.codex/sessions/年/月/日/rollout-…-<對話編號>.jsonl`，裡面有實際注入的指示。取出兩個標記之間的區塊算指紋，和規則檔的比對即可。這是機器留下的紀錄，比模型自己回答可靠。
+- 要用問答測一個 App 時，問它「照你的規則該下哪個指令」這類要它照做的題目，再加一題規則裡沒有答案的對照題；不要叫它背出指示。兩次新對話答案不一致，或對照題編出答案，就不能採信。
 - 專案層級的規則（repo 裡的 `AGENTS.md`、`CLAUDE.md`）不歸這個 skill 管。
