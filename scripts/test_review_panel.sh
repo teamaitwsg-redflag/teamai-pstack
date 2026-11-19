@@ -34,6 +34,7 @@ esac
 case "\$*" in
   *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-quiet" ]; then echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
+     if [ "\$mode" = "refused-agy" ]; then echo "jetski: no output produced — a tool required the \\"write_file\\" permission that headless mode cannot prompt for, so it was auto-denied." >&2; exit 0; fi
      if [ "\$mode" = "refused-read" ]; then echo "我看一下"; echo "permission required: Read proof.txt was not run" >&2; exit 0; fi
      if [ "\$mode" = "refused-other" ]; then echo "我看一下"; echo "permission denied: reading /etc/shadow" >&2; exit 0; fi
      if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
@@ -247,6 +248,10 @@ check "完全沒有 stdout、只有拒絕紀錄：也合格" '[ "$rc" -eq 0 ] &&
 export FAKE_MODE_grok=refused-other
 "$panel" --selftest --only grok >"$tmp/s6.txt" 2>&1; rc=$?
 check "被擋的是別的事、跟 proof.txt 無關：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s6.txt"'
+use_fakes; export FAKE_MODE_agy=refused-agy
+"$panel" --selftest --only agy >"$tmp/s9.txt" 2>&1; rc=$?
+check "agy 的拒絕寫法（write_file 權限被自動拒絕、沒有任何 stdout）：合格" '[ "$rc" -eq 0 ] && grep -q "^agy	合格：寫檔被工具本身擋下" "$tmp/s9.txt"'
+unset FAKE_MODE_agy
 export FAKE_MODE_grok=refused-read
 "$panel" --selftest --only grok >"$tmp/s7.txt" 2>&1; rc=$?
 check "被擋的是讀 proof.txt 不是寫：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s7.txt"'
