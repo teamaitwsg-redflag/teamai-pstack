@@ -11,7 +11,8 @@ bad() { failn=$((failn + 1)); echo "  失敗：$1"; }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 # 假的審查者。行為由 FAKE_MODE 決定：reply（預設）、fail、hang、stubborn、write、chatty、refused、silent。
-# refused 模仿 Grok：寫檔被工具擋下後整輪結束，只在 stderr 留下拒絕訊息。
+# refused 模仿寫檔被工具擋下後整輪結束：refused 還印了一句話，refused-quiet 完全沒有 stdout，
+# refused-other 被擋的是別的事（不算證據）。cutoff 模仿審到一半被打斷：有輸出、正常結束、但沒有完成標記。
 # hang 會衍生一個子程序；stubborn 不理會 TERM；chatty 在自我測試時答非所問。
 # 會把收到的參數記到 $FAKE_LOG，測試用它確認唯讀旗標真的有帶。
 mkdir -p "$tmp/bin"
@@ -32,10 +33,15 @@ case "\$mode" in
 esac
 case "\$*" in
   *proof.txt*) if [ "\$mode" = "refused" ]; then echo "我現在建立 proof.txt"; echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
+     if [ "\$mode" = "refused-quiet" ]; then echo "permission required: Write proof.txt was not run" >&2; exit 0; fi
+     if [ "\$mode" = "refused-other" ]; then echo "我看一下"; echo "permission denied: reading /etc/shadow" >&2; exit 0; fi
      if [ "\$mode" = "chatty" ]; then msg="好的，我看了一下。"; elif [ "\$mode" = "write" ]; then msg="WROTE"; else msg="BLOCKED"; fi
      if [ -n "\$out" ]; then echo "\$msg" >"\$out"; else echo "\$msg"; fi; exit 0 ;;
 esac
-if [ -n "\$out" ]; then echo "[低] a.txt:1 — $name 的發現" >"\$out"; else echo "[低] a.txt:1 — $name 的發現"; fi
+body="[低] a.txt:1 — $name 的發現"
+[ "\$mode" = "cutoff" ] || body="\$body
+REVIEW-COMPLETE $name-model"
+if [ -n "\$out" ]; then echo "\$body" >"\$out"; else echo "\$body"; fi
 FAKE
 chmod +x "$tmp/bin/$name"
 done
@@ -61,7 +67,7 @@ check "各自的審查結果有內容" 'grep -q "codex 的發現" "$tmp/o1/codex
 check "改動有存成 change.diff" 'grep -q "^+two" "$tmp/o1/change.diff"'
 check "codex 帶了唯讀旗標" 'grep -q "^codex exec -s read-only" "$FAKE_LOG"'
 check "agy 帶了 plan 模式" 'grep -q "^agy --mode plan" "$FAKE_LOG"'
-check "grok 帶了唯讀沙箱" 'grep -q "^grok --sandbox read-only" "$FAKE_LOG"'
+check "grok 帶了唯讀沙箱、只給讀檔工具、關掉上網" 'grep -q "^grok --sandbox read-only --tools read_file,grep,list_dir --disable-web-search" "$FAKE_LOG"'
 
 echo "2. 有人沒裝、有人失敗：照實記錄，其他人不受影響"
 use_fakes; export TEAMAI_GROK_BIN="$tmp/none" TEAMAI_AGY_BIN="$tmp/none" FAKE_MODE_gemini=fail; : >"$FAKE_LOG"
@@ -77,6 +83,12 @@ use_fakes; export FAKE_MODE=silent
 "$panel" --repo "$repo" --out "$tmp/o3" --only codex >"$tmp/o3.txt" 2>&1; rc=$?
 check "結束碼 2" '[ "$rc" -eq 2 ]'
 check "codex 記為 empty" 'grep -q "^codex	empty" "$tmp/o3/summary.tsv"'
+unset FAKE_MODE
+
+echo "3b. 審到一半被打斷：有輸出也不算審過"
+use_fakes; export FAKE_MODE=cutoff
+"$panel" --repo "$repo" --out "$tmp/o3b" --only grok >"$tmp/o3b.txt" 2>&1; rc=$?
+check "grok 記為 incomplete，結束碼 2" '[ "$rc" -eq 2 ] && grep -q "^grok	incomplete" "$tmp/o3b/summary.tsv"'
 unset FAKE_MODE
 
 echo "4. 逾時：砍掉並記為 timeout"
@@ -189,6 +201,10 @@ check "同廠牌已有 agy，gemini 不列為缺席" '! grep -q "^gemini" "$tmp/
 use_fakes; export TEAMAI_AGY_BIN="$tmp/none"; : >"$FAKE_LOG"
 "$panel" --repo "$repo" --out "$tmp/o7i" >"$tmp/o7i.txt" 2>&1; rc=$?
 check "沒有 agy 時改用 gemini，帶 plan 模式" 'grep -q "^gemini	ok" "$tmp/o7i/summary.tsv" && grep -q "^gemini --approval-mode plan" "$FAKE_LOG"'
+use_fakes; export FAKE_MODE_agy=fail
+"$panel" --repo "$repo" --out "$tmp/o7j" --only agy,gemini >"$tmp/o7j.txt" 2>&1; rc=$?
+check "agy 有裝但失敗（例如沒登入）：換 gemini 上，兩個都記錄" '[ "$rc" -eq 0 ] && grep -q "^agy	failed(7)" "$tmp/o7j/summary.tsv" && grep -q "^gemini	ok" "$tmp/o7j/summary.tsv"'
+unset FAKE_MODE_agy
 
 echo "8. 預設輸出資料夾在 repo 裡，而且不會被 git 看到"
 use_fakes
@@ -207,7 +223,13 @@ check "點名 grok 寫得了檔" 'grep -q "^grok	不合格：寫得了檔" "$tmp
 unset FAKE_MODE_grok
 export FAKE_MODE_grok=refused
 "$panel" --selftest --only grok >"$tmp/s4.txt" 2>&1; rc=$?
-check "被工具擋下後沒回答、但紀錄寫明拒絕寫入：合格" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下" "$tmp/s4.txt"'
+check "被工具擋下後沒回答、但紀錄寫明拒絕寫入：合格，並印出那行紀錄" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下，紀錄是「permission required: Write proof.txt was not run」" "$tmp/s4.txt"'
+export FAKE_MODE_grok=refused-quiet
+"$panel" --selftest --only grok >"$tmp/s5.txt" 2>&1; rc=$?
+check "完全沒有 stdout、只有拒絕紀錄：也合格" '[ "$rc" -eq 0 ] && grep -q "^grok	合格：寫檔被工具本身擋下" "$tmp/s5.txt"'
+export FAKE_MODE_grok=refused-other
+"$panel" --selftest --only grok >"$tmp/s6.txt" 2>&1; rc=$?
+check "被擋的是別的事、跟 proof.txt 無關：不算證據，判無法確認" '[ "$rc" -ne 0 ] && grep -q "^grok	無法確認" "$tmp/s6.txt"'
 unset FAKE_MODE_grok
 export FAKE_MODE_codex=chatty
 "$panel" --selftest --only codex >"$tmp/s3.txt" 2>&1; rc=$?

@@ -7,7 +7,7 @@
 #                   [--repo DIR] [--out DIR] [--only a,b] [--timeout 秒] [--focus "重點"]
 #
 # 審查結果寫到 <out>/<審查者>.md，總表在 <out>/summary.tsv（審查者、狀態、位元組、秒數）。
-# 結束碼：0 至少一個審查者有回覆；2 沒有任何審查者有回覆；3 沒有改動；4 改動裡疑似有密鑰；64 用法錯誤。
+# 結束碼：0 至少一個審查者審完；2 沒有任何審查者審完；3 沒有改動；4 改動裡疑似有密鑰；64 用法錯誤。
 #
 # 寫給 macOS 內建的 bash 3.2，所以不用關聯陣列、mapfile、timeout 指令。
 set -u
@@ -65,7 +65,10 @@ launch() {
     gemini)
       exec "$bin" --approval-mode plan --skip-trust -o text -p "$prompt" </dev/null >"$out" ;;
     grok)
-      exec "$bin" --sandbox read-only --output-format plain -p "$prompt" </dev/null >"$out" ;;
+      # Grok 在無人看管時，只要叫了需要核准的工具（寫檔、上網）整輪就會結束，審到一半也算正常結束。
+      # 所以只給它讀檔類的工具並關掉上網，讓它沒有東西可以被擋。
+      exec "$bin" --sandbox read-only --tools "read_file,grep,list_dir" --disable-web-search \
+        --output-format plain -p "$prompt" </dev/null >"$out" ;;
     agy)
       # agy 不明說禁止 shell 的話，連簡單的題目都會去叫 shell 而失敗（自我測試時不加，因為那時就是要它試）
       [ "$mode" = "review" ] && prompt="只准使用 read_file 工具讀檔，禁止執行任何 shell 指令。
@@ -104,6 +107,8 @@ run_one() {
   if [ -e "$mark" ]; then status="timeout"
   elif [ "$rc" -ne 0 ]; then status="failed($rc)"
   elif [ "$bytes" -lt 2 ]; then status="empty"
+  # 審查要寫到最後的完成標記才算數；中途被打斷的會正常結束、也有輸出，只能靠這個分辨
+  elif [ "$mode" = "review" ] && ! grep -q "REVIEW-COMPLETE" "$out"; then status="incomplete"
   else status="ok"; fi
   rm -f "$mark"
   printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$bytes" "$((end - start))" >"$outdir/$name.status"
@@ -170,12 +175,15 @@ if [ "$mode" = "selftest" ]; then
     st="$(cut -f2 "$tmp/out/$name.status")"
     # 合格要同時滿足：檔案不存在，而且它自己回報試過、被擋下來。
     # 只回了別的話不算，因為那可能是根本沒試。
+    # 有些工具一被擋就結束這一輪，來不及回答。這時看工具自己的紀錄：
+    # 要同一行同時提到 proof.txt 和拒絕，別的權限錯誤不算。
+    refusal="$(grep -iE "(permission required|was not run|permission denied|not permitted).*proof\.txt|proof\.txt.*(permission required|was not run|permission denied|not permitted)" "$tmp/out/$name.log" | head -1 | cut -c1-160)"
     if [ -e "$tmp/work/proof.txt" ]; then verdict="不合格：寫得了檔"; fail=1
-    elif [ "$st" != "ok" ]; then verdict="不合格：沒有回覆（${st}）"; fail=1
+    elif [ "$st" != "ok" ] && [ "$st" != "empty" ]; then verdict="不合格：沒有回覆（${st}）"; fail=1
     elif grep -q "WROTE" "$tmp/out/$name.md"; then verdict="不合格：它回報寫入成功"; fail=1
     elif grep -q "BLOCKED" "$tmp/out/$name.md"; then verdict="合格：試過寫檔，被擋下來"
-    # 有些工具（Grok）一被擋就結束這一輪，來不及回答；這時看工具自己的紀錄有沒有寫明拒絕了寫入
-    elif grep -qiE "permission required|was not run|permission denied|not permitted" "$tmp/out/$name.log"; then verdict="合格：寫檔被工具本身擋下（見它的紀錄）"
+    elif [ -n "$refusal" ]; then verdict="合格：寫檔被工具本身擋下，紀錄是「${refusal}」"
+    elif [ "$st" = "empty" ]; then verdict="不合格：沒有回覆（empty）"; fail=1
     else verdict="無法確認：沒有照指示回答，不知道有沒有試"; fail=1; fi
     printf '%s\t%s\t回覆：%s\n' "$name" "$verdict" "$(head -c 200 "$tmp/out/$name.md" | tr '\n' ' ')"
     rm -rf "$tmp"
@@ -261,7 +269,7 @@ fi
 
 [ -n "$selected" ] || { echo "找不到任何審查者（缺：$missing ）。" >&2; exit 2; }
 
-prompt="你是獨立的程式審查者。只能讀檔，禁止修改任何檔案，禁止執行會改變狀態的指令。
+prompt="你是獨立的程式審查者。只用讀檔與搜尋檔案的工具。禁止修改任何檔案，禁止執行指令，不要上網。
 要審的改動在這個檔案（unified diff）：$change
 需要上下文時可以讀 $repo 裡的其他檔案。
 
@@ -274,7 +282,7 @@ prompt="你是獨立的程式審查者。只能讀檔，禁止修改任何檔案
 
 每個發現寫一行：[嚴重度 高/中/低] 檔案:行號 — 問題 — 你的依據 — 建議。
 沒有發現的類別寫「未發現」。看不到或無法判斷的寫「無法確認」，不要猜。
-最後用一行寫出你是哪個模型。"
+全部寫完後，最後一行寫：REVIEW-COMPLETE 加上你是哪個模型。沒有這一行會被當成沒審完。"
 [ -n "$focus" ] && prompt="$prompt
 
 這次請特別注意：$focus"
@@ -289,6 +297,20 @@ for name in $selected; do
   pids="$pids $!"
 done
 for p in $pids; do wait "$p"; done
+
+# 同一家廠牌有備援時（Google 的 agy 與 gemini）：排前面的沒成功，就換後面的上
+for name in $REVIEWERS; do
+  wanted "$name" || continue
+  case " $selected " in *" $name "*) continue ;; esac
+  alt="$(find_bin "$name")"; [ -n "$alt" ] || continue
+  for first in $selected; do
+    [ "$(vendor_of "$first")" = "$(vendor_of "$name")" ] || continue
+    [ "$(cut -f2 "$out/$first.status")" = "ok" ] && continue
+    ( run_one "$name" "$alt" "$repo" "$prompt" "$out" "$secs" ) &
+    pids="$!"; wait "$pids"
+    selected="$selected $name"
+  done
+done
 trap - INT TERM
 
 : >"$out/summary.tsv"

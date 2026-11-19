@@ -7,6 +7,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 pass=0; failn=0
 check() { if eval "$2"; then pass=$((pass + 1)); echo "  通過：$1"; else failn=$((failn + 1)); echo "  失敗：$1"; fi; }
 export HOME="$tmp/home"; mkdir -p "$HOME/.grok" "$HOME/.codex"
+mkdir -p "$tmp/home2/.gemini/config"; printf '# agy 原本的規則\n' >"$tmp/home2/.gemini/config/AGENTS.md"
 printf '# 我自己的規則\n\n不要動這一行。\n' >"$HOME/.codex/AGENTS.md"
 
 "$sync" --check >"$tmp/c1.txt" 2>&1; rc=$?
@@ -30,5 +31,13 @@ check "再寫一次會修回來" 'grep -q "球員不兼裁判" "$HOME/.grok/AGEN
 check "--remove 拿掉區塊，使用者的內容留著" '! grep -q "teamai-rules" "$HOME/.codex/AGENTS.md" && grep -q "不要動這一行" "$HOME/.codex/AGENTS.md"'
 "$sync" --bogus >/dev/null 2>&1; rc=$?
 check "不認得的參數：結束碼 64" '[ "$rc" -eq 64 ]'
+( export HOME="$tmp/home2"
+  "$sync" >"$tmp/a1.txt" 2>&1
+  "$sync" --check >/dev/null 2>&1; echo $? >"$tmp/a1.rc"
+  cp "$HOME/.gemini/config/AGENTS.md" "$tmp/a1.file"
+  "$sync" --remove >/dev/null 2>&1 )
+check "agy 的規則檔：寫入、原有內容保留在前、--check 通過" 'grep -q "^agy	已寫入" "$tmp/a1.txt" && [ "$(head -1 "$tmp/a1.file")" = "# agy 原本的規則" ] && grep -q "球員不兼裁判" "$tmp/a1.file" && [ "$(cat "$tmp/a1.rc")" -eq 0 ]'
+check "agy 的規則檔：--remove 後只剩原有內容" '! grep -q "teamai-rules" "$tmp/home2/.gemini/config/AGENTS.md" && grep -q "agy 原本的規則" "$tmp/home2/.gemini/config/AGENTS.md"'
+check "有 .gemini 資料夾時 gemini 的規則檔也一併處理" 'grep -q "^gemini	已寫入" "$tmp/a1.txt"'
 echo; echo "sync-rules 測試：通過 ${pass}，失敗 ${failn}"
 [ "$failn" -eq 0 ]

@@ -34,7 +34,7 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 | `codex` | OpenAI | `codex exec -s read-only` |
 | `agy` | Google | `agy --mode plan` |
 | `gemini` | Google | `gemini --approval-mode plan`（沒有 agy 時才用，同廠牌只跑一個） |
-| `grok` | xAI | `grok --sandbox read-only` |
+| `grok` | xAI | `grok --sandbox read-only`，只給讀檔工具並關掉上網 |
 
 一個都沒有時，告訴使用者缺什麼、怎麼裝（見最後一節），然後只做 `/pstack:interrogate`，並在回報裡明說少了跨廠牌這一道。
 
@@ -64,7 +64,7 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 
 ### 4. 讀總表，再讀每一份結果
 
-`summary.tsv` 的狀態有 `ok`、`empty`、`failed(碼)`、`timeout`、`missing`。只有 `ok` 的才算審過。`failed` 的去看對應的 `.log` 與 `.md`（有些工具把錯誤訊息印在標準輸出），常見原因是沒登入或額度用完，照實告訴使用者，不要反覆重試。
+`summary.tsv` 的狀態有 `ok`、`incomplete`、`empty`、`failed(碼)`、`timeout`、`missing`。只有 `ok` 的才算審過。`incomplete` 是有輸出但沒寫到結尾的完成標記，代表審到一半就停了，內容只能當線索，不能當成審過。`failed` 的去看對應的 `.log` 與 `.md`（有些工具把錯誤訊息印在標準輸出），常見原因是沒登入或額度用完，照實告訴使用者，不要反覆重試。
 
 ### 5. 逐條查證
 
@@ -113,4 +113,4 @@ description: 跨廠牌審核團。重要變更合併前、準備開 PR 前，或
 
 工具裝在非標準位置時，用環境變數指定：`TEAMAI_CODEX_BIN`、`TEAMAI_GEMINI_BIN`、`TEAMAI_GROK_BIN`、`TEAMAI_AGY_BIN`。
 
-裝好之後一定跑一次 `<panel> --selftest`。實測紀錄（2026-11，macOS）：Codex 0.169 與 Grok 1.0.89 都擋得住寫檔。Grok 被擋之後會直接結束那一輪、不會回答，自我測試是看它自己的紀錄判定的。
+裝好之後一定跑一次 `<panel> --selftest`。實測紀錄（2026-11，macOS）：Codex 0.169 與 Grok 1.0.89 都擋得住寫檔。Grok 在無人看管時只要叫了需要核准的工具（寫檔、上網），整輪就直接結束而且回報成功，所以腳本只給它讀檔工具。Google 這一家 agy 沒成功時（例如沒登入），腳本會自動換 gemini 再試一次。
