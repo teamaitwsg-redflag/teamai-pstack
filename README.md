@@ -77,7 +77,7 @@ claude plugin install teamai@teamai-pstack
 | `plugins/teamai/skills/` | 八個 skill，每個資料夾一個 `SKILL.md` |
 | `plugins/teamai/rules/` | 共用規則與模型分工表 |
 | `plugins/teamai/hooks/` | session 開始時載入規則的 hook |
-| `scripts/validate.py`、`scripts/test_*.sh` | 結構檢查，以及 hook、審核團、規則同步三支腳本的測試，CI 在 Linux 與 macOS 都跑 |
+| `scripts/validate.py`、`scripts/test_*.sh`、`scripts/test_install_scripts.ps1` | 結構檢查，以及 hook、審核團、規則同步、安裝與更新腳本的測試。CI 在 Linux 與 macOS 跑 shell 的部分，在 Windows 用 PowerShell 5.1 與 7 跑 `.ps1` 的部分 |
 | `install.sh`、`install.ps1`、`update.sh`、`update.ps1` | 安裝與更新 |
 | `docs/workflow.md` | 工作流說明 |
 

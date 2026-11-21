@@ -32,3 +32,15 @@ jobs:
         run: /bin/bash scripts/test_review_panel.sh
       - name: 規則同步腳本測試
         run: /bin/bash scripts/test_sync_rules.sh
+      - name: 安裝與更新腳本測試
+        run: /bin/bash scripts/test_install_scripts.sh
+
+  windows:
+    # install.ps1 與 update.ps1 只能在 Windows 驗：用假的 claude，在 Windows PowerShell 5.1 與 PowerShell 7 各跑一次
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.ps1 與 update.ps1 測試
+        shell: powershell
+        run: .\scripts\test_install_scripts.ps1

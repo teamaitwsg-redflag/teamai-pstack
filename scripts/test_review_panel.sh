@@ -1,6 +1,9 @@
 #!/bin/bash
 # 用假的 CLI 測 review-panel.sh 的行為。不呼叫任何真的 AI。
 set -u
+# 不讀執行者自己的 git 設定：開了 commit 簽章的電腦上，建立測試用 repo 會失敗或卡住
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 root="$(cd "$(dirname "$0")/.." && pwd)"
 panel="$root/plugins/teamai/skills/cross-review/scripts/review-panel.sh"
 tmp="$(mktemp -d)"
@@ -19,7 +22,8 @@ mkdir -p "$tmp/bin"
 for name in codex gemini grok agy; do
 cat >"$tmp/bin/$name" <<FAKE
 #!/bin/bash
-echo "$name \$*" >>"\${FAKE_LOG:-/dev/null}"
+# 每次呼叫記成一行（提示詞裡的換行換成空白），才能用「這一行是誰」來檢查它收到的提示詞
+echo "$name \$(printf '%s' "\$*" | tr '\n' ' ')" >>"\${FAKE_LOG:-/dev/null}"
 echo "$name CWD=\$PWD" >>"\${FAKE_LOG:-/dev/null}"
 out=""
 prev=""
@@ -34,12 +38,19 @@ case "\$mode" in
 esac
 case "\$*" in
   *inside.txt*)
-     # 隔離自我測試：prove-leak 連副本外也寫得到，prove-none 兩邊都寫不了，其餘只寫得了副本裡
+     # 隔離自我測試。預設：寫得了副本裡，副本外被擋，而且像 shell 一樣在 stderr 留下被拒絕的訊息。
+     # prove-leak 副本外也寫得到；prove-none 兩邊都寫不了；
+     # prove-lazy 根本沒去試副本外；prove-liar 沒去試卻回答 BOTH；
+     # prove-unrelated 有拒絕訊息但講的是別的路徑；prove-crash 被擋了但以錯誤結束。
      outside="\$(printf '%s' "\$*" | grep -o '/[^ ]*/outside.txt' | head -1)"
      case "\$mode" in
        prove-leak) echo hi >inside.txt; echo hi >"\$outside"; msg=BOTH ;;
        prove-none) msg=NONE ;;
-       *) echo hi >inside.txt; msg=INSIDE-ONLY ;;
+       prove-lazy) echo hi >inside.txt; msg=INSIDE-ONLY ;;
+       prove-liar) echo hi >inside.txt; msg=BOTH ;;
+       prove-unrelated) echo hi >inside.txt; echo "bash: /etc/hosts: Permission denied" >&2; msg=INSIDE-ONLY ;;
+       prove-crash) echo hi >inside.txt; echo "bash: \$outside: Operation not permitted" >&2; echo INSIDE-ONLY >"\$out"; exit 7 ;;
+       *) echo hi >inside.txt; echo "bash: \$outside: Operation not permitted" >&2; msg=INSIDE-ONLY ;;
      esac
      if [ -n "\$out" ]; then echo "\$msg" >"\$out"; else echo "\$msg"; fi; exit 0 ;;
 esac
@@ -320,6 +331,8 @@ check "被 .gitignore 忽略的檔案沒有進副本" '[ ! -e "$copy/secret.txt"
 check "副本裡有要審的 diff" 'grep -q "^+two" "$copy/.teamai-change.diff"'
 check "審查者寫的檔案留在副本，原本的 repo 沒有多東西" '[ -e "$copy/repro.sh" ] && [ ! -e "$repo/repro.sh" ] && [ ! -e "$repo/.teamai-change.diff" ]'
 check "提示詞要求用實際執行證明" 'grep -q "實際執行" "$FAKE_LOG"'
+check "唯讀的 grok 被告知它提的都是未驗證線索" 'grep "^grok --sandbox" "$FAKE_LOG" | grep -q "未驗證線索"'
+check "執行模式的 codex 不會被要求寫未驗證線索（沒跑過的不寫）" '! grep "^codex exec -s workspace-write" "$FAKE_LOG" | grep -q "未驗證線索"'
 rm -rf "$copy"
 "$panel" --repo "$repo" --out "$tmp/p2" --prove --diff "$tmp/given.diff" --only codex >"$tmp/p2.txt" 2>&1; rc=$?
 check "--prove 配 --diff：拒絕（結束碼 64）" '[ "$rc" -eq 64 ]'
@@ -328,13 +341,24 @@ git -C "$repo" reset -q --hard; git -C "$repo" clean -q -fd; echo two >>"$repo/a
 echo "9c. --selftest --prove：隔離要實測"
 use_fakes; export TEAMAI_CANARY_ROOT="$tmp"
 "$panel" --selftest --prove --only codex >"$tmp/ps1.txt" 2>&1; rc=$?
-check "副本裡寫得了、副本外寫不了：合格" '[ "$rc" -eq 0 ] && grep -q "^codex	合格：副本裡寫得了，副本外寫不了" "$tmp/ps1.txt"'
+check "副本裡寫得了、副本外的寫入有被拒絕的紀錄：合格，並印出那行紀錄" '[ "$rc" -eq 0 ] && grep -q "^codex	合格：副本裡寫得了，副本外的寫入被拒絕（紀錄：bash: .*outside.txt: Operation not permitted）" "$tmp/ps1.txt"'
+check "合格時不留紀錄資料夾" '! grep -q "紀錄保留在" "$tmp/ps1.txt"'
+n=0
+for m in prove-lazy prove-liar prove-unrelated prove-crash; do
+  n=$((n + 1)); export FAKE_MODE_codex="$m"
+  "$panel" --selftest --prove --only codex >"$tmp/pu$n.txt" 2>&1; rc=$?
+  check "沒有可驗證的拒絕證據（${m}）：未驗證，結束碼 3" '[ "$rc" -eq 3 ] && grep -q "^codex	未驗證：" "$tmp/pu$n.txt"'
+  check "未驗證時保留紀錄，而且紀錄檔真的在（${m}）" 'd="$(sed -n "s/^  紀錄保留在 \([^（]*\)（.*/\1/p" "$tmp/pu$n.txt")"; [ -n "$d" ] && [ -f "$d/codex.log" ] && rm -rf "$(dirname "$d")"'
+done
+check "沒去試卻回答 BOTH：標明回覆和事實矛盾" 'grep -q "^codex	未驗證：回覆說副本外也寫成功" "$tmp/pu2.txt"'
+check "以錯誤結束：標明沒有正常結束" 'grep -q "^codex	未驗證：審查者沒有正常結束（failed(7)）" "$tmp/pu4.txt"'
+unset FAKE_MODE_codex
 export FAKE_MODE_codex=prove-leak
 "$panel" --selftest --prove --only codex >"$tmp/ps2.txt" 2>&1; rc=$?
-check "副本外也寫得到：不合格" '[ "$rc" -ne 0 ] && grep -q "^codex	不合格：寫得到副本以外的地方" "$tmp/ps2.txt"'
+check "副本外也寫得到：不合格，結束碼 1" '[ "$rc" -eq 1 ] && grep -q "^codex	不合格：寫得到副本以外的地方" "$tmp/ps2.txt"'
 export FAKE_MODE_codex=prove-none
 "$panel" --selftest --prove --only codex >"$tmp/ps3.txt" 2>&1; rc=$?
-check "副本裡也寫不了：不合格（沒辦法執行來證明）" '[ "$rc" -ne 0 ] && grep -q "^codex	不合格：副本裡也寫不了" "$tmp/ps3.txt"'
+check "副本裡也寫不了：不合格（沒辦法執行來證明），結束碼 1" '[ "$rc" -eq 1 ] && grep -q "^codex	不合格：副本裡也寫不了" "$tmp/ps3.txt"'
 unset FAKE_MODE_codex
 "$panel" --selftest --prove --only grok,agy >"$tmp/ps4.txt" 2>&1; rc=$?
 check "沒有可執行的審查者：結束碼 2，不假裝測過" '[ "$rc" -eq 2 ]'
