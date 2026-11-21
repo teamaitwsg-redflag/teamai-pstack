@@ -22,9 +22,14 @@ mkdir -p "$tmp/bin"
 for name in codex gemini grok agy; do
 cat >"$tmp/bin/$name" <<FAKE
 #!/bin/bash
-# 每次呼叫記成一行（提示詞裡的換行換成空白），才能用「這一行是誰」來檢查它收到的提示詞
-echo "$name \$(printf '%s' "\$*" | tr '\n' ' ')" >>"\${FAKE_LOG:-/dev/null}"
-echo "$name CWD=\$PWD" >>"\${FAKE_LOG:-/dev/null}"
+# 每次呼叫記成一行（提示詞裡的換行換成空白），才能用「這一行是誰」來檢查它收到的提示詞。
+# 幾個假審查者會同時跑，長的一行在 macOS 上會被別人的輸出插進來，所以寫入前先拿鎖（mkdir 是原子的）。
+line="$name \$(printf '%s' "\$*" | tr '\n' ' ')"
+if [ -n "\${FAKE_LOG:-}" ]; then
+  until mkdir "\$FAKE_LOG.lock" 2>/dev/null; do sleep 0.01; done
+  printf '%s\n%s\n' "\$line" "$name CWD=\$PWD" >>"\$FAKE_LOG"
+  rmdir "\$FAKE_LOG.lock"
+fi
 out=""
 prev=""
 for a in "\$@"; do [ "\$prev" = "-o" ] && [ "$name" = "codex" ] && out="\$a"; prev="\$a"; done
